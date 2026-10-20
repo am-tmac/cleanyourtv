@@ -106,8 +106,7 @@ public final class LauncherSettingsActivity extends Activity {
                 refresh();
             }
         });
-        findViewById(R.id.juosAccessibilityChoice).setOnClickListener(v ->
-                open(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
+        findViewById(R.id.juosAccessibilityChoice).setOnClickListener(v -> openAccessibilitySettings());
         findViewById(R.id.tvSettingsChoice).setOnClickListener(v ->
                 open(new Intent(Settings.ACTION_SETTINGS)));
         refresh();
@@ -154,10 +153,32 @@ public final class LauncherSettingsActivity extends Activity {
     }
 
     private void open(Intent intent) {
-        try {
-            startActivity(intent);
-        } catch (ActivityNotFoundException | SecurityException e) {
+        if (!tryStart(intent)) {
             Toast.makeText(this, R.string.not_available, Toast.LENGTH_LONG).show();
         }
+    }
+
+    private boolean tryStart(Intent intent) {
+        try {
+            startActivity(intent);
+            return true;
+        } catch (ActivityNotFoundException | SecurityException e) {
+            return false;
+        }
+    }
+
+    /** JUOS hides the standard action; fall back to its AOSP page, then to one-time ADB help. */
+    private void openAccessibilitySettings() {
+        for (AccessibilitySettingsRoute.Target target : AccessibilitySettingsRoute.candidates()) {
+            Intent intent = target.action != null ? new Intent(target.action)
+                    : new Intent().setClassName(target.packageName, target.className);
+            if (tryStart(intent)) return;
+        }
+        new AlertDialog.Builder(this)
+                .setTitle(R.string.juos_accessibility_adb_title)
+                .setMessage(getString(R.string.juos_accessibility_adb_help,
+                        AccessibilitySettingsRoute.commandsText()))
+                .setPositiveButton(android.R.string.ok, null)
+                .show();
     }
 }

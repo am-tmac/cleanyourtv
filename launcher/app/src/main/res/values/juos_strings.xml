@@ -5,4 +5,6 @@
     <string name="juos_accessibility_settings">Open system accessibility settings</string>
     <string name="juos_redirect_help">Optional, off by default. Enable this switch, then personally choose and authorize JUOS Home redirect in system Accessibility settings. Only the known C3S JUOS Home component redirects to CleanYourTV; other screens are ignored. No view text is read or transmitted. This does not change default Home or disable any JUOS package. Disable this switch or revoke the service in Accessibility to stop. At most one attempt per 1.5 seconds; a fourth attempt within 10 seconds turns the switch off for safety. Device compatibility is not yet verified.</string>
     <string name="juos_redirect_stopped">JUOS redirect stopped for safety. Review Launcher settings before enabling again.</string>
+    <string name="juos_accessibility_adb_title">Accessibility settings unavailable</string>
+    <string name="juos_accessibility_adb_help" formatted="true">This TV\'s system does not provide an accessibility settings entry. Authorize once from a computer with ADB by running these two commands. The first keeps every accessibility service that is already enabled and only adds JUOS Home redirect.\n\n%1$s\n\nAfter this one-time authorization, the setting survives restarts and app updates installed over the existing app.</string>
 </resources>
