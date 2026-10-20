@@ -88,6 +88,26 @@ public final class LauncherSettingsActivity extends Activity {
             Toast.makeText(this, R.string.home_settings_help, Toast.LENGTH_LONG).show();
             open(new Intent(Settings.ACTION_HOME_SETTINGS));
         });
+        findViewById(R.id.juosRedirectChoice).setOnClickListener(v -> {
+            SharedPreferences prefs = getSharedPreferences(JuosHomeRedirectService.PREFS, MODE_PRIVATE);
+            boolean enabled = !prefs.getBoolean(JuosHomeRedirectService.ENABLED, false);
+            if (enabled) {
+                new AlertDialog.Builder(this)
+                        .setTitle(R.string.juos_redirect_name)
+                        .setMessage(R.string.juos_redirect_help)
+                        .setPositiveButton(R.string.enable, (dialog, which) -> {
+                            prefs.edit().putBoolean(JuosHomeRedirectService.ENABLED, true)
+                                    .putBoolean(JuosHomeRedirectService.STOPPED, false).apply();
+                            refresh();
+                        })
+                        .setNegativeButton(android.R.string.cancel, null).show();
+            } else {
+                prefs.edit().putBoolean(JuosHomeRedirectService.ENABLED, false).apply();
+                refresh();
+            }
+        });
+        findViewById(R.id.juosAccessibilityChoice).setOnClickListener(v ->
+                open(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
         findViewById(R.id.tvSettingsChoice).setOnClickListener(v ->
                 open(new Intent(Settings.ACTION_SETTINGS)));
         refresh();
@@ -101,7 +121,21 @@ public final class LauncherSettingsActivity extends Activity {
         refresh();
     }
 
+    @Override protected void onResume() {
+        super.onResume();
+        if (choices != null) refresh();
+    }
+
     private void refresh() {
+        SharedPreferences prefs = getSharedPreferences(JuosHomeRedirectService.PREFS, MODE_PRIVATE);
+        boolean redirectEnabled = prefs.getBoolean(JuosHomeRedirectService.ENABLED, false);
+        TextView redirectChoice = findViewById(R.id.juosRedirectChoice);
+        redirectChoice.setText(getString(R.string.juos_redirect_state,
+                getString(redirectEnabled ? R.string.on : R.string.off)));
+        redirectChoice.setSelected(redirectEnabled);
+        findViewById(R.id.juosSafetyStatus).setVisibility(
+                prefs.getBoolean(JuosHomeRedirectService.STOPPED, false)
+                        ? android.view.View.VISIBLE : android.view.View.GONE);
         for (int i = 0; i < columnChoices.length; i++) {
             columnChoices[i].setSelected(columns == i + 4);
         }

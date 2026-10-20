@@ -1,0 +1,8 @@
+<resources>
+    <string name="app_management">应用管理</string>
+    <string name="app_management_help">开：在桌面（Dock 和应用网格）显示；关：不在桌面显示。不会卸载、禁用、停止或清除应用数据。OK 切换，返回键关闭。</string>
+    <string name="app_hidden_by_theme">由主题隐藏（hidden_apps）</string>
+    <string name="app_management_theme_locked">此应用被主题配置 hidden_apps 隐藏，需修改主题配置才能显示。</string>
+    <string name="app_management_save_failed">保存失败，未做任何更改。</string>
+    <string name="no_apps_to_manage">没有找到应用。</string>
+</resources>

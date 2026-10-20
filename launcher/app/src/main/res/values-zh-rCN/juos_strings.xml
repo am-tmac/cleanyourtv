@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="juos_redirect_name">JUOS Home 重定向（Vidda 试验）</string>
+    <string name="juos_redirect_state">JUOS Home 重定向：%1$s</string>
+    <string name="juos_accessibility_settings">打开系统无障碍设置</string>
+    <string name="juos_redirect_help">可选功能，默认关闭。先打开此开关，再由你本人在系统无障碍设置中选择并授权“JUOS Home 重定向”。仅已知 C3S JUOS Home 组件出现时打开 CleanYourTV，忽略其他界面。不读取或传输界面文本，不修改默认 Home，不禁用任何 JUOS 包。关闭此开关或在无障碍设置中撤销服务即可停止。每 1.5 秒最多尝试一次，10 秒内第 4 次尝试会为安全自动关闭开关。尚未完成实机兼容性验证。</string>
+    <string name="juos_redirect_stopped">JUOS 重定向已为安全自动关闭，请在启动器设置中检查后再启用。</string>
+</resources>

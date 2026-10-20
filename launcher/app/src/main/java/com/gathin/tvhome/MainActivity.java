@@ -149,7 +149,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     /** The day the petal shower last played, so it greets the first Home of each day only. */
     private static LocalDate lastPetalShower;
     /** hidden_apps as the adapter sees them (config.xml or a theme's config.json): a hidden app gets no card either. */
-    private Set<String> hiddenApps = Collections.emptySet();
+    /** Theme hidden_apps: App management shows these as locked off. */
+    private Set<String> themeHiddenApps = Collections.emptySet();
     private List<Cards.Card> cards = Collections.emptyList();
     /** The grid has been laid out and focused since the last resume; the card prompt waits for this. */
     private boolean tilesReady;
@@ -160,6 +161,9 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     private boolean rebuildOnResume = true;
     /** The Inputs or Module cards dropdown while one is open, so onPause can close it. */
     private PopupWindow openPopup;
+    /** The long-press options panel of a tile, while it is open. */
+    private TileOptionsDialog tileOptions;
+    private boolean tileOptionsHid;
     /** Reorder mode is on (top-bar button). */
     private boolean reordering;
     /** Key of the tile being carried in reorder mode, or null. */
@@ -240,6 +244,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         density = getResources().getDisplayMetrics().density;
         // config.xml, overlaid by config.json from a pushed theme (see Config and tools/theme.sh).
         Config cfg = Config.load(this);
+        LibraryApps.migrateLegacyHidden(this);   // before the first tile load keeps old hidden apps hidden
         settingsKeycodes = cfg.settingsKeycodes;
         settingsKeyPanel = cfg.settingsKeyPanel;
         COLUMNS = cfg.columns;
@@ -284,7 +289,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         }
         vpnApp = cfg.vpnApp;
         moduleCards = cfg.moduleCards;
-        hiddenApps = new HashSet<>(cfg.hiddenApps);
+        themeHiddenApps = new HashSet<>(cfg.hiddenApps);
 
         grid = findViewById(R.id.grid);
         rtlAppGrid = getResources().getBoolean(R.bool.rtl_app_grid);
@@ -644,6 +649,9 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         final String returnKey = lastFocusedKey;
         final int returnSlot = lastFocused;
         final List<Cards.Card> none = Collections.emptyList();
+        // No card prompts for packages that are off the desktop (theme hidden_apps or App management).
+        final Set<String> hiddenApps = new HashSet<>(themeHiddenApps);
+        hiddenApps.addAll(LibraryApps.loadRemoved(this));
         cards = moduleCards ? CardFeature.run(() -> Cards.discover(this, hiddenApps, Cards.load(Cards.storeFile(this))), none) : none;
         adapter.reload(cards.isEmpty() ? none : CardFeature.run(() -> Cards.shown(cards), none));
         lastFocusedKey = returnKey;
@@ -682,6 +690,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         if (cardPrompt != null) cardPrompt.dismiss();
         if (appLibrary != null) appLibrary.close();
         if (openPopup != null) openPopup.dismiss();
+        if (tileOptions != null) tileOptions.dismiss();
     }
 
     @Override
@@ -929,6 +938,34 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         });
         openPopup = appLibrary.popup;
         appLibrary.show();
+    }
+
+    /** Long-press on a dock or grid tile: Crop to fill, Hide from desktop, App info. */
+    @Override
+    public void onTileOptions(int position) {
+        String pkg = adapter.packageAt(position);
+        if (pkg == null || reordering || isFinishing()) return;
+        if (openPopup != null) openPopup.dismiss();
+        if (tileOptions != null) tileOptions.dismiss();
+        final String returnKey = adapter.keyAt(position);
+        tileOptions = new TileOptionsDialog(this, pkg, adapter.labelAt(position), adapter.hasBannerAt(position),
+                adapter.fillAvailableAt(position), themeHiddenApps, new TileOptionsDialog.Callbacks() {
+            @Override public void fillChanged(String changed) { adapter.refreshFill(changed); }
+            @Override public void hidden(String gone) { tileOptionsHid = true; }
+            @Override public void closed() {
+                tileOptions = null;
+                if (tileOptionsHid) {
+                    tileOptionsHid = false;
+                    reloadApps(false);
+                    restoreFocus();
+                } else {
+                    int pos = adapter.positionOf(returnKey);
+                    if (pos >= 0) grid.post(() -> focusTile(pos));
+                }
+            }
+        });
+        tileOptionsHid = false;
+        tileOptions.show();
     }
 
     @Override
@@ -1859,12 +1896,22 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
                 new Intent(this, LauncherSettingsActivity.class), LAUNCHER_SETTINGS_REQUEST));
         if (moduleCards) addSettingsMenuRow(rows, popup, R.string.module_cards, this::showModuleCards);
         addSettingsMenuRow(rows, popup, R.string.reorder, this::toggleReorder);
+        addSettingsMenuRow(rows, popup, R.string.app_management, this::showAppManagement);
         panel.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED);
         popup.setWidth(Math.max((int) (200 * density), panel.getMeasuredWidth()));
         // Hebrew puts Settings at the left of the header: grow the menu inward from it.
         dropIn(popup, panel, anchor, getResources().getBoolean(R.bool.rtl_menu_bar)
                 ? Gravity.START : Gravity.END);
         rows.getChildAt(0).requestFocus();
+    }
+
+    /** Fourth Settings-menu row: one switch per launchable app; Back closes it and rebuilds the tiles. */
+    private void showAppManagement() {
+        if (reordering) endReorder();
+        new AppManagementDialog(this, themeHiddenApps, () -> {
+            reloadApps(false);
+            findViewById(R.id.btnSettings).requestFocus();
+        }).show();
     }
 
     private void addSettingsMenuRow(LinearLayout rows, PopupWindow popup, int title, Runnable action) {

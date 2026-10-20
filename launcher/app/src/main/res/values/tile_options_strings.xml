@@ -1,0 +1,7 @@
+<resources>
+    <string name="tile_option_fill">Crop to fill</string>
+    <string name="tile_option_hide">Hide from desktop</string>
+    <string name="tile_option_hide_note">Show it again in Settings › App management.</string>
+    <string name="tile_option_info">App info</string>
+    <string name="tile_option_save_failed">Could not save. Nothing was changed.</string>
+</resources>

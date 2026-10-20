@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- One App management row: icon, name (and why it is locked), then the desktop switch. OK toggles. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:minHeight="48dp"
+    android:orientation="horizontal"
+    android:gravity="center_vertical"
+    android:paddingStart="12dp"
+    android:paddingEnd="12dp"
+    android:paddingTop="4dp"
+    android:paddingBottom="4dp"
+    android:background="@drawable/switch_row_bg"
+    android:focusable="true"
+    android:clickable="true">
+
+    <ImageView
+        android:id="@+id/icon"
+        android:layout_width="32dp"
+        android:layout_height="32dp"
+        android:scaleType="fitCenter"
+        android:contentDescription="@null" />
+
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:layout_marginStart="12dp"
+        android:layout_marginEnd="12dp"
+        android:orientation="vertical"
+        android:duplicateParentState="true">
+
+        <TextView
+            android:id="@+id/title"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textColor="#FFFFFFFF"
+            android:duplicateParentState="true"
+            android:textSize="15sp"
+            android:fontFamily="@font/outfit_medium"
+            android:singleLine="true"
+            android:ellipsize="end" />
+
+        <TextView
+            android:id="@+id/note"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textColor="#8CFFFFFF"
+            android:duplicateParentState="true"
+            android:textSize="11sp"
+            android:fontFamily="@font/outfit"
+            android:singleLine="true"
+            android:visibility="gone" />
+    </LinearLayout>
+
+    <com.gathin.tvhome.PillSwitchView
+        android:id="@+id/toggle"
+        android:layout_width="52dp"
+        android:layout_height="31dp"
+        android:focusable="false"
+        android:clickable="false"
+        android:importantForAccessibility="no" />
+</LinearLayout>

@@ -1,0 +1,8 @@
+<resources>
+    <string name="app_management">App management</string>
+    <string name="app_management_help">On: shown on the desktop (dock and app grid). Off: not shown. Apps are never uninstalled, disabled, stopped or cleared. OK toggles, Back closes.</string>
+    <string name="app_hidden_by_theme">Hidden by theme (hidden_apps)</string>
+    <string name="app_management_theme_locked">This app is hidden by the theme configuration (hidden_apps). Change the theme configuration to show it.</string>
+    <string name="app_management_save_failed">Could not save. Nothing was changed.</string>
+    <string name="no_apps_to_manage">No apps found.</string>
+</resources>

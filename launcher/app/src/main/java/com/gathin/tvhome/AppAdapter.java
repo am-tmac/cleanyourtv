@@ -56,6 +56,9 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
         void onLibraryRequested();
         void onLibraryFocused();
         void onLibraryUp();
+
+        /** Long-press (hold OK) on an app tile in the dock or the grid: open its options panel. */
+        void onTileOptions(int position);
     }
 
     static final class Entry {
@@ -71,6 +74,10 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
         final String name;
         /** Ambient glow colour; 0 until sampled from the banner, or the card's accent from the start. */
         int ambient;
+        /** Highest-resolution app icon for Crop to fill without a banner; loaded on first use. */
+        Drawable largeIcon;
+        /** Resolved launch entry, for loading largeIcon. */
+        android.content.pm.ActivityInfo info;
 
         Entry(String label, ComponentName component, Drawable banner, Drawable icon) {
             this(APP, label, component, banner, icon, null, 0);
@@ -184,6 +191,8 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
     /** Calmer motion for weak GPUs (config.xml, reduced_motion): no overshoot, shorter fades. */
     private final boolean reducedMotion;
     private final List<Entry> items = new ArrayList<>();
+    /** Per-app Crop to fill choices (TileFillStore); apps without one keep their previous look. */
+    private Map<String, Boolean> fillChoices = Collections.emptyMap();
 
     AppAdapter(Context ctx, TileListener listener, int dockSize, Config cfg) {
         this.ctx = ctx;
@@ -216,16 +225,15 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
         Set<String> tvPackages = new HashSet<>();
         for (ResolveInfo ri : found) if (ri.activityInfo != null) tvPackages.add(ri.activityInfo.packageName);
         leanbackPackages = tvPackages;
-        Set<String> added = LibraryApps.load(ctx);
-        Set<String> removed = LibraryApps.loadRemoved(ctx);
-        if (!added.isEmpty()) {
-            Set<String> seen = new HashSet<>(tvPackages);
-            for (ResolveInfo ri : pm.queryIntentActivities(
-                    new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER), 0)) {
-                if (ri.activityInfo != null && added.contains(ri.activityInfo.packageName)
-                        && seen.add(ri.activityInfo.packageName)) found.add(ri);
-            }
+        // Launcher-only apps (e.g. Hisense Hi投屏, which has no leanback entry) are always considered;
+        // App management decides per package whether they are on the desktop.
+        DesktopApps.Choices choices = new DesktopApps.Choices(LibraryApps.load(ctx), LibraryApps.loadRemoved(ctx));
+        Set<String> considered = new HashSet<>(tvPackages);
+        for (ResolveInfo ri : pm.queryIntentActivities(
+                new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER), 0)) {
+            if (ri.activityInfo != null && considered.add(ri.activityInfo.packageName)) found.add(ri);
         }
+        fillChoices = TileFillStore.load(ctx);
         Map<String, Cards.Card> cardByPkg = new HashMap<>();
         for (Cards.Card c : cards) cardByPkg.put(c.pkg, c);
         List<Entry> fresh = new ArrayList<>();
@@ -236,7 +244,7 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
             if (ri.activityInfo == null) continue;
             String pkg = ri.activityInfo.packageName;
             if (pkg.equals(ctx.getPackageName()) || !ri.activityInfo.exported
-                    || !LibraryApps.visible(tvPackages.contains(pkg), hidden.contains(pkg), added.contains(pkg), removed.contains(pkg))) continue;
+                    || !DesktopApps.shown(pkg, tvPackages.contains(pkg), hidden, choices, ctx.getPackageName())) continue;
             ComponentName component = new ComponentName(pkg, ri.activityInfo.name);
             Cards.Card card = cardByPkg.get(pkg);
             if (card != null && !card.component.equals(component)) continue;   // the card stands in for this tile
@@ -246,11 +254,11 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
             if (!seen.add(pkg + '\n' + label)) continue;
             Drawable banner = loadBanner(pm, ri);
             Drawable icon = ri.loadIcon(pm);
-            if (card != null) {
-                fresh.add(new Entry(Entry.CARD, label, component, banner, icon, card.caption, card.accent));
-            } else {
-                fresh.add(new Entry(label, component, banner, icon));
-            }
+            Entry entry = card != null
+                    ? new Entry(Entry.CARD, label, component, banner, icon, card.caption, card.accent)
+                    : new Entry(label, component, banner, icon);
+            entry.info = ri.activityInfo;
+            fresh.add(entry);
         }
         Collections.sort(fresh, (a, b) -> {
             // The owner's own order first; tiles it does not know (new installs) follow by the rule below.
@@ -299,6 +307,49 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
             }
         }
         return ri.activityInfo.loadBanner(pm);
+    }
+
+    /**
+     * The app icon at the highest density the app ships (Crop to fill stretches it across the whole card),
+     * falling back to the icon the tile already has.
+     */
+    private Drawable loadLargeIcon(Entry e) {
+        if (e.largeIcon != null) return e.largeIcon;
+        Drawable best = null;
+        if (e.info != null) {
+            int id = e.info.getIconResource();
+            if (id != 0) {
+                try {
+                    Resources resources = ctx.getPackageManager().getResourcesForApplication(e.info.applicationInfo);
+                    best = resources.getDrawableForDensity(id, DisplayMetrics.DENSITY_XXXHIGH, null);
+                } catch (PackageManager.NameNotFoundException | Resources.NotFoundException ignored) {
+                }
+            }
+        }
+        e.largeIcon = best != null ? best : e.icon;
+        return e.largeIcon;
+    }
+
+    /** Whether this tile has its own banner (the options panel's default for Crop to fill). */
+    boolean hasBannerAt(int position) {
+        return position >= 0 && position < items.size() && items.get(position).banner != null;
+    }
+
+    /** Module cards keep their own look; Crop to fill applies to ordinary app tiles. */
+    boolean fillAvailableAt(int position) {
+        return position >= 0 && position < items.size() && items.get(position).kind == Entry.APP;
+    }
+
+    String packageAt(int position) {
+        return position >= 0 && position < items.size() ? items.get(position).pkg : null;
+    }
+
+    /** Re-reads the saved Crop to fill choices and redraws this package's tiles at once (no reload). */
+    void refreshFill(String pkg) {
+        fillChoices = TileFillStore.load(ctx);
+        for (int i = 0; i < items.size(); i++) {
+            if (items.get(i).pkg.equals(pkg)) notifyItemChanged(i);
+        }
     }
 
     @NonNull
@@ -369,29 +420,37 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
         h.card.setTranslationZ(focused && advancedEffects ? 8f * ctx.getResources().getDisplayMetrics().density : 0f);
         h.banner.setScaleX(focused && advancedEffects ? 1.035f : 1f);
         h.banner.setScaleY(focused && advancedEffects ? 1.035f : 1f);
-        if (e.banner != null) {
-            h.banner.setImageDrawable(e.banner);
-            h.banner.setVisibility(View.VISIBLE);
-            h.icon.setVisibility(View.GONE);
-            h.label.setVisibility(View.GONE);
-        } else {
+        boolean hasBanner = e.banner != null;
+        // Module cards and the Default-home tile keep the previous look; app tiles follow Crop to fill.
+        boolean fill = e.kind == Entry.APP ? TileFill.enabled(fillChoices, e.pkg, hasBanner) : TileFill.defaultOn(hasBanner);
+        TileFill.Mode mode = TileFill.mode(fill, hasBanner);
+        if (mode == TileFill.Mode.ICON_LABEL) {
             h.banner.setImageDrawable(null);
             h.banner.setVisibility(View.GONE);
             h.icon.setImageDrawable(e.icon);
             h.icon.setVisibility(View.VISIBLE);
             h.label.setText(e.label);
             h.label.setVisibility(View.VISIBLE);
+        } else {
+            boolean crop = mode == TileFill.Mode.CROP_FILL;
+            h.banner.setScaleType(crop ? ImageView.ScaleType.CENTER_CROP : ImageView.ScaleType.FIT_CENTER);
+            h.banner.setImageDrawable(TileFill.usesBanner(fill, hasBanner) ? e.banner : loadLargeIcon(e));
+            h.banner.setVisibility(View.VISIBLE);
+            h.icon.setImageDrawable(null);
+            h.icon.setVisibility(View.GONE);
+            h.label.setVisibility(mode.inCardLabel ? View.VISIBLE : View.GONE);
         }
         h.card.setOnClickListener(v -> launch(e));
-        h.card.setOnLongClickListener(v -> {
-            Intent i = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + e.pkg));
-            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            try {
-                ctx.startActivity(i);
-            } catch (ActivityNotFoundException ignored) {
-            }
-            return true;
-        });
+        if (e.kind == Entry.HOME_SETTINGS) {
+            // Not an app: keep the previous long-press (the launcher's own details page).
+            h.card.setOnLongClickListener(v -> { openAppDetails(e.pkg); return true; });
+        } else {
+            h.card.setOnLongClickListener(v -> {
+                int pos = h.getBindingAdapterPosition();
+                if (pos != RecyclerView.NO_POSITION) listener.onTileOptions(pos);
+                return true;
+            });
+        }
     }
 
     /** Opens the tile's activity by explicit component, with no extras: a card can name nothing else. */
@@ -414,6 +473,15 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
             }
         } catch (Exception ex) {
             Toast.makeText(ctx, ctx.getString(R.string.cant_open, e.label), Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    private void openAppDetails(String pkg) {
+        Intent i = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + pkg));
+        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        try {
+            ctx.startActivity(i);
+        } catch (ActivityNotFoundException ignored) {
         }
     }
 

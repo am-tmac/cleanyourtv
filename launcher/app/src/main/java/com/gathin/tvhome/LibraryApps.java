@@ -77,6 +77,53 @@ final class LibraryApps {
         return true;
     }
 
+    /** Both choice files for App management, or null when either is unreadable (never overwrite it). */
+    static DesktopApps.Choices loadChoices(Context context) {
+        try { return new DesktopApps.Choices(readStrict(store(context, false)), readStrict(store(context, true))); }
+        catch (IOException | RuntimeException e) {
+            Log.w("TvHome.Library", "Could not read shortcut choices", e);
+            return null;
+        }
+    }
+
+    static boolean saveChoices(Context context, DesktopApps.Choices choices) {
+        // Removals first: a failure half way leaves the app hidden rather than unexpectedly shown.
+        return writeAll(store(context, true), choices.removed) && writeAll(store(context, false), choices.added);
+    }
+
+    private static boolean writeAll(AtomicFile file, Set<String> packages) {
+        FileOutputStream output = null;
+        try {
+            byte[] bytes = encode(packages).getBytes(StandardCharsets.UTF_8);
+            output = file.startWrite();
+            output.write(bytes);
+            file.finishWrite(output);
+            return true;
+        } catch (IOException | RuntimeException e) {
+            if (output != null) file.failWrite(output);
+            Log.w("TvHome.Library", "Could not save shortcut choices", e);
+            return false;
+        }
+    }
+
+    /**
+     * 2.3-vidda-experimental.2 kept "Show / hide apps" in its own preferences. Fold those packages into
+     * the removed list once, so they stay hidden, then drop the old key only after the files are saved.
+     */
+    static void migrateLegacyHidden(Context context) {
+        android.content.SharedPreferences prefs = context.getSharedPreferences("user_hidden_apps", Context.MODE_PRIVATE);
+        Set<String> legacy = new HashSet<>();
+        for (String pkg : DesktopApps.decodeLegacy(prefs.getString("packages", null))) if (validPackage(pkg)) legacy.add(pkg);
+        if (legacy.isEmpty()) {
+            if (prefs.contains("packages")) prefs.edit().remove("packages").apply();
+            return;
+        }
+        DesktopApps.Choices current = loadChoices(context);
+        if (current == null) return;   // retry on the next start rather than lose either list
+        if (saveChoices(context, DesktopApps.migrate(current, legacy, context.getPackageName())))
+            prefs.edit().remove("packages").commit();
+    }
+
     private static boolean write(AtomicFile file, Set<String> saved, String pkg, boolean added) {
         FileOutputStream output = null;
         try {
