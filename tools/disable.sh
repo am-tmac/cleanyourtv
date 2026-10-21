@@ -23,17 +23,21 @@ export MSYS_NO_PATHCONV=1
 [ -r "$LIST" ] || { echo "cannot read the list: $LIST" >&2; exit 1; }
 # Normalise first: Notepad on Windows saves a BOM and CRLF, and without this the first "# TV" line
 # arrives as a package name and every entry keeps a trailing \r (#208).
-# `|| true`: an empty result is not a failure of this pipeline. Under pipefail the grep exits 1 when
-# the list holds no package line at all, and `set -e` then ended the run with no output and status 1,
-# so a list whose entries are all commented out (what CONTRIBUTING asks for while one is untested)
-# read exactly like a run that died halfway.
-PKGS=$(LC_ALL=C awk 'NR==1{sub(/^\357\273\277/,"")} {sub(/\r$/,""); print}' "$LIST" \
-  | grep -vE '^\s*(#|$)' | sed -E 's/\s+#.*$//' | awk '{print $1}' || true)
-BAD=$(printf '%s\n' "$PKGS" | grep -vE '^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)+$' || true)
+# Everything from the first '#' is a note, with or without a space before it, exactly as recovery.py
+# and disable.ps1 read the line. A line with two names used to lose the second one silently: refuse it.
+LINES=$(LC_ALL=C awk 'NR==1{sub(/^\357\273\277/,"")} {sub(/\r$/,""); sub(/#.*/,""); gsub(/^[ \t]+|[ \t]+$/,"")} $0 != "" {print NR ": " $0}' "$LIST")
+ENTRIES=$(printf '%s\n' "$LINES" | sed -E 's/^[0-9]+: //' | sed '/^$/d')
+BAD=$(printf '%s\n' "$ENTRIES" | tr ' \t' '\n\n' | sed '/^$/d' | grep -vE '^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)+$' || true)
 if [ -n "$BAD" ]; then
   { echo "refusing $LIST: not a package name:"; printf '%s\n' "$BAD" | sed 's/^/  /'; } >&2
   exit 1
 fi
+MULTI=$(printf '%s\n' "$LINES" | grep -E '^[0-9]+: [^ 	]+[ 	]+[^ 	]' || true)
+if [ -n "$MULTI" ]; then
+  { echo "refusing $LIST: one package name per line:"; printf '%s\n' "$MULTI" | sed 's/^/  line /'; } >&2
+  exit 1
+fi
+PKGS=$ENTRIES
 # Nothing to do, and nothing to lose by saying so before the TV is asked anything: no record is
 # written and no query is sent, so this cannot be mistaken for a list that ran. It is the first
 # refusal after the shape check because it is the one a contributor is most likely to hit: a list

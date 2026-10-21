@@ -17,11 +17,26 @@ if (-not (Test-Path $py)) { throw 'run: python -m venv tools\venv; tools\venv\Sc
 if (-not $TvHost) { throw 'pass -TvHost <tv ip> or set $env:TV_HOST' }
 $env:TV_HOST = $TvHost
 
-$pkgs = Get-Content $List | ForEach-Object { ($_ -replace '#.*$', '').Trim() } | Where-Object { $_ } | ForEach-Object { ($_ -split '\s+')[0] }
+# Same reading as disable.sh and recovery.py: everything from the first '#' is a note, and a line holds
+# exactly one package name (a second one used to be dropped silently).
 # Lists come from contributors and each name is pasted into a shell command on the TV (#165).
-$bad = @($pkgs | Where-Object { $_ -notmatch '^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)+$' })
+$lineNo = 0
+$bad = @()
+$multi = @()
+$pkgs = @(foreach ($raw in Get-Content $List) {
+    $lineNo++
+    $line = ($raw -replace '#.*$', '').Trim()
+    if (-not $line) { continue }
+    $tokens = @($line -split '\s+')
+    $bad += @($tokens | Where-Object { $_ -notmatch '^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)+$' })
+    if ($tokens.Count -gt 1) { $multi += "line ${lineNo}: $line" }
+    $tokens[0]
+})
 if ($bad.Count -gt 0) {
     throw "refusing $List, not a package name: $($bad -join ', ')"
+}
+if ($multi.Count -gt 0) {
+    throw "refusing $List, one package name per line: $($multi -join '; ')"
 }
 # Nothing to do: a list whose entries are all commented out is what CONTRIBUTING asks for while one
 # is untested. Say it here, before a query goes to the TV, rather than letting recovery.py stop the run

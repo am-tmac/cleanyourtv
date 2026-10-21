@@ -59,8 +59,9 @@ def core_packages(names):
 def read_list(path):
     """Package names from a debloat list, in file order.
 
-    A BOM and CRLF from a Windows editor are dropped, as is a trailing `# note`; anything that is not
-    a bare package name stops the run before the TV is touched.
+    A BOM and CRLF from a Windows editor are dropped, as is everything from the first `#` (a note,
+    with or without a space before it); anything that is not one bare package name per line stops
+    the run before the TV is touched. disable.sh and disable.ps1 read lines the same way.
     """
     text = Path(path).read_text(encoding="utf-8-sig", errors="replace")
     names = []
@@ -68,9 +69,15 @@ def read_list(path):
         line = line.split("#", 1)[0].strip()
         if not line:
             continue
-        name = line.split()[0]
-        if not PACKAGE_RE.fullmatch(name):
-            raise SystemExit(f"{path}:{number}: not a package name: {name!r}")
+        tokens = line.split()
+        for name in tokens:
+            if not PACKAGE_RE.fullmatch(name):
+                raise SystemExit(f"{path}:{number}: not a package name: {name!r}")
+        if len(tokens) > 1:
+            # Used to drop everything after the first name silently, so the second one was never
+            # disabled and never restored.
+            raise SystemExit(f"{path}:{number}: one package name per line, found {len(tokens)}: {line!r}")
+        name = tokens[0]
         names.append(name)
     if not names:
         raise SystemExit(f"{path}: no package names in this list")
