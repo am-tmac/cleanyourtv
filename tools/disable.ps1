@@ -147,6 +147,9 @@ if (-not $env:FORCE_HOME -and $pkgs.Count -gt 0) {
         Write-Warning "$why Check by hand that the list does not hold your launcher before running it: the replacement launcher needs Android 8.0 (minSdk 26), so on an older set the stock launcher is the only Home there is, and a set with no recovery has no way back (#795)."
     }
 }
+# Two packages people usually want to keep (disable.sh). Not refused: a note, so the choice is conscious.
+if ($pkgs -contains 'com.google.android.katniss') { Write-Warning 'Note: com.google.android.katniss is the voice assistant (remote mic / voice search); it stops working while disabled.' }
+if ($pkgs -contains 'com.google.android.tv') { Write-Warning 'Note: com.google.android.tv is Live Channels (Live TV / tuner guide); the tuner app stops working while disabled.' }
 # Same as disable.sh (#321): a package that asks for android.permission.TV_INPUT_HARDWARE is the software
 # layer under the HDMI, AV and tuner inputs. Disable one and the port still notices the cable but shows
 # "No Signal" for good; re-enabling the pieces in batches does not bring the picture back, a full restore

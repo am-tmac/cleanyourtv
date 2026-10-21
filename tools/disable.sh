@@ -191,6 +191,15 @@ if [ -n "$PKGS" ] && [ -z "$HOME_PKG" ] && [ -z "${FORCE_HOME:-}" ]; then
   echo 'there is: disabled, it leaves nothing to start, and a set with no recovery has no way back (#795).' >&2
 fi
 
+# Two packages people usually want to keep. Not refused: a note, so the choice is a conscious one.
+for p in com.google.android.katniss com.google.android.tv; do
+  printf '%s\n' "$PKGS" | grep -xF "$p" >/dev/null || continue
+  case "$p" in
+    com.google.android.katniss) echo "Note: $p is the voice assistant (remote mic / voice search); it stops working while disabled." >&2 ;;
+    com.google.android.tv) echo "Note: $p is Live Channels (Live TV / tuner guide); the tuner app stops working while disabled." >&2 ;;
+  esac
+done
+
 # Only the package's own "requested permissions" block counts: a vendor app in a shared UID would otherwise
 # match through its shared user's permissions and be skipped by mistake.
 # A package that asks for android.permission.TV_INPUT_HARDWARE is usually the software layer under the

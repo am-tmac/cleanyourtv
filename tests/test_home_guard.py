@@ -309,7 +309,7 @@ class HomeGuardTest(unittest.TestCase):
                 self.assertNotIn("Skipping", self.output(result))
 
 
-    # Review M1: Android's chooser ("android") or a failed/empty resolve used to skip the guard
+    # Android's chooser ("android") or a failed/empty resolve used to skip the guard
     # entirely, so a list holding the only launcher went through. Without a known owner the guard now
     # falls back to the HOME claimants, and without those to the known stock launchers.
     def test_chooser_answer_still_keeps_the_only_launcher(self):
@@ -453,6 +453,25 @@ class HomeGuardTest(unittest.TestCase):
                 result, sent = self.disable(entry, {"FORCE_HOME": "1"})
                 self.assertEqual(result.returncode, 0, self.output(result))
                 self.assertIn(f"pm disable-user --user 0 {STOCK}", sent)
+    # two packages people usually want to keep get a one-line, non-blocking notice.
+    def test_ask_first_packages_get_a_notice_but_are_still_disabled(self):
+        self.write_list(["com.example.before", "com.google.android.katniss", "com.google.android.tv"])
+        for entry in self.entries():
+            with self.subTest(entry=entry):
+                self.tv(installed=["com.example.before", "com.google.android.katniss",
+                                   "com.google.android.tv", STOCK])
+                result, sent = self.disable(entry)
+                self.assertEqual(result.returncode, 0, self.output(result))
+                self.assertIn("pm disable-user --user 0 com.google.android.katniss", sent)
+                self.assertIn("pm disable-user --user 0 com.google.android.tv", sent)
+                out = self.output(result)
+                self.assertIn("Note: com.google.android.katniss", out)
+                self.assertIn("Note: com.google.android.tv ", out)
+
+    def test_no_notice_for_ordinary_lists(self):
+        self.tv()
+        result, _ = self.disable("sh")
+        self.assertNotIn("Note: com.google.android", self.output(result))
 
     def test_the_skipped_launcher_stays_in_the_recovery_record(self):
         self.tv()
