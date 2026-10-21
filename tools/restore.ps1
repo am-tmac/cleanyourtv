@@ -19,8 +19,9 @@ if (-not $TvHost) { throw 'pass -TvHost <tv ip> or set $env:TV_HOST' }
 $env:TV_HOST = $TvHost
 
 # Same as restore.sh: replay the recorded states instead of enabling the whole list, so packages that
-# were already disabled stay disabled (#239). recovery.py reads and validates the list itself, warns
-# when no record exists and then falls back to the old behaviour.
+# were already disabled stay disabled (#239). recovery.py reads and validates the list itself. When no
+# record exists it stops unless `$env:CLEANYOURTV_RESTORE_WITHOUT_RECORD=1` asks for the old behaviour
+# (enable the whole list), and names records for the same list taken under another TV_HOST.
 $cmds = & $py -I (Join-Path $repo 'tools\recovery.py') --commands $List $Stock
 if ($LASTEXITCODE -ne 0) { throw 'no restore plan was built, the TV was not changed' }
 $cmds | & $py -I (Join-Path $repo 'tools\tv.py') --batch

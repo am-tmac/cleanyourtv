@@ -170,6 +170,30 @@ def not_a_launcher(home):
             or bool(FACTORY_HOME_RE.search(package)))
 
 
+def similar_records(list_path, host):
+    """Other records whose list has the same file name, or whose host is this one in another form
+    (a name instead of the IP, different case, a port): the usual reasons a record is not found."""
+    folder = Path.home() / ".cleanyourtv"
+    want = Path(list_path).name
+    norm = (host or "").strip().lower().split(":")[0]
+    own = record_path(list_path, host)
+    hits = []
+    for candidate in sorted(folder.glob("recovery-*.json")) if folder.is_dir() else []:
+        if candidate == own:
+            continue
+        try:
+            with open(candidate) as f:
+                data = json.load(f)
+        except (OSError, ValueError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        other_host = str(data.get("host") or "").strip().lower().split(":")[0]
+        if Path(str(data.get("list") or "")).name == want or (norm and other_host == norm):
+            hits.append(candidate)
+    return hits
+
+
 def load_record(path):
     try:
         with open(path) as f:
@@ -385,11 +409,21 @@ def restore_commands(list_path, stock, host):
     commands = []
 
     if not path.exists():
+        sys.stderr.write(f"no recovery record for this TV and list ({path}).\n")
+        for hint in similar_records(list_path, host):
+            sys.stderr.write(f"  a record for the same list name exists: {hint}\n"
+                             "  (taken with a different TV_HOST or from another copy of the list; run\n"
+                             "  restore with the same TV_HOST and list path as disable to use it)\n")
+        if os.environ.get("CLEANYOURTV_RESTORE_WITHOUT_RECORD") != "1":
+            raise SystemExit(
+                "Without a record, restore can only enable every listed package, including ones that\n"
+                "were already disabled before cleanup, and reset Home and the animation scales to their\n"
+                "defaults. Nothing was sent. To do that anyway, run again with\n"
+                "CLEANYOURTV_RESTORE_WITHOUT_RECORD=1.")
         sys.stderr.write(
-            f"no recovery record for this TV and list ({path}).\n"
-            "Enabling every listed package and resetting Home and the animation scales to their\n"
-            "defaults. Packages that were already disabled before cleanup will be enabled too:\n"
-            "check the list before running this.\n")
+            "CLEANYOURTV_RESTORE_WITHOUT_RECORD=1: enabling every listed package and resetting Home and\n"
+            "the animation scales to their defaults. Packages that were already disabled before cleanup\n"
+            "will be enabled too.\n")
         for name in packages:
             commands.append(f"pm enable {name}")
         if stock:
