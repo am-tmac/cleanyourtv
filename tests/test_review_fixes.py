@@ -87,6 +87,13 @@ class TvPyArgumentsTest(TempDirTest):
         result = self.run_tv("--probe", TV_PORT="5555")
         self.assertIn("tried to connect", result.stderr)
 
+    def test_transfer_usage_precedes_host_configuration(self):
+        for option in ("--push", "--pull"):
+            result = self.run_tv(option, TV_HOST="")
+            self.assertEqual(result.returncode, 2, result.stderr)
+            self.assertIn("usage", result.stderr)
+            self.assertNotIn("tried to connect", result.stderr)
+
     def test_push_and_pull_with_wrong_argument_count_print_usage(self):
         for args in (["--push"], ["--push", "a"], ["--push", "a", "b", "c"],
                      ["--pull"], ["--pull", "a"], ["--pull", "a", "b", "c"]):
@@ -191,6 +198,9 @@ class Device:
     def shell(self, command, read_timeout_s=None):
         with open(LOG, "a") as f:
             f.write(json.dumps(command) + "\n")
+        # Inject transport exceptions after staging exists, to verify cleanup on every failure phase.
+        if os.environ.get("FAKE_RAISE") and command.startswith(os.environ["FAKE_RAISE"]):
+            raise OSError("simulated transport failure")
         if os.environ.get("FAKE_CORRUPT") and command.startswith("echo '"):
             command = "echo 'QUJD' >>" + command.split(">>", 1)[1]
         return subprocess.run(["/bin/sh", "-c", command], capture_output=True, text=True).stdout
@@ -274,6 +284,21 @@ class B64PushTest(TempDirTest):
         self.assertIn("MISMATCH", result.stdout)
         self.assertEqual(target.read_bytes(), b"old contents")
         self.assertEqual(sorted(p.name for p in self.remote_dir.iterdir()), ["file.apk"])
+
+    def test_transport_exceptions_remove_staging_and_keep_original(self):
+        for phase in ("echo '", "base64 -d", "mv -f"):
+            with self.subTest(phase=phase):
+                target = self.remote_dir / "file.apk"
+                target.write_bytes(b"old contents")
+                result = self.push(str(self.local(b"new contents")), str(target), FAKE_RAISE=phase)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(target.read_bytes(), b"old contents")
+                self.assertEqual(sorted(p.name for p in self.remote_dir.iterdir()), ["file.apk"])
+
+    def test_dot_dot_anywhere_is_refused(self):
+        result = self.push(str(self.local(b"x")), str(self.remote_dir / "a..b"), FAKE_NO_CONNECT="1")
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertNotIn("connect() was called", result.stderr)
 
     def test_empty_file(self):
         target = self.remote_dir / "empty.txt"

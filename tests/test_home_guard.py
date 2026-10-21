@@ -97,6 +97,8 @@ def main():
     try:
         print(answer(args[-1]), end="")
     except Fail:
+        # Exercise a failed query that emitted partial stdout before the transport failed.
+        print(state.get("failed_output", ""), end="")
         return 1   # tools/tv.py exits non-zero when the TV does not answer
     return 0
 
@@ -282,6 +284,20 @@ class HomeGuardTest(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, self.output(result))
                 self.assertNotIn(f"pm disable-user --user 0 {STOCK}", sent)
                 self.assertIn(f"Skipping {STOCK}", self.output(result))
+
+    def test_failed_resolve_discards_partial_output(self):
+        self.tv(home_fails=True, failed_output="com.example.partial/.Home\n")
+        result, sent = self.disable("sh")
+        self.assertEqual(result.returncode, 0, self.output(result))
+        self.assertNotIn(f"pm disable-user --user 0 {STOCK}", sent)
+        self.assertIn("Skipping", result.stderr)
+
+    def test_unrecognised_resolve_answer_uses_claimants(self):
+        for entry in self.entries():
+            self.tv(home="No activity found")
+            result, sent = self.disable(entry)
+            self.assertEqual(result.returncode, 0, self.output(result))
+            self.assertNotIn(f"pm disable-user --user 0 {STOCK}", sent)
 
     def test_empty_resolve_still_keeps_the_only_launcher(self):
         for entry in self.entries():

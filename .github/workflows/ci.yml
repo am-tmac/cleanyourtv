@@ -49,3 +49,27 @@ jobs:
           size=$(stat -c %s launcher/app/build/outputs/apk/release/app-release.apk)
           echo "release APK: $((size / 1024)) KB"
           test "$size" -lt 409600 || { echo "APK is over 400 KB; the launcher targets 1 GB TVs, keep it small"; exit 1; }
+
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ShellCheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - name: Shell warnings and errors
+        run: shellcheck -S warning tools/*.sh launcher/*.sh
+
+  pwsh-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: PowerShell errors
+        shell: pwsh
+        run: |
+          Install-Module PSScriptAnalyzer -Scope CurrentUser -Force -Repository PSGallery
+          # Path is scalar in PSScriptAnalyzer; inspect both trees and combine the Error findings.
+          $findings = @(foreach ($path in @('tools', 'launcher')) {
+            Invoke-ScriptAnalyzer -Path $path -Recurse -Severity Error
+          })
+          $findings | Format-Table -AutoSize
+          if ($findings.Count -gt 0) { exit 1 }

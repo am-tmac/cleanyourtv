@@ -52,6 +52,7 @@ if (-not $StockLauncher) {
         # Android's chooser: launchers tie and no default is set (a restore followed by a re-applied list
         # ends here). Take the one known stock launcher among the HOME claimants, if there is exactly one.
         $claimants = (& $py -I ..\tools\tv.py 'cmd package query-activities --brief -a android.intent.action.MAIN -c android.intent.category.HOME') -join "`n"
+        if ($LASTEXITCODE -ne 0) { throw 'could not query Home claimants; stock launcher was left untouched' }
         $found = @($knownStock | Where-Object { $claimants -match ([regex]::Escape($_) + '/') })
         if ($found.Count -eq 1) { $StockLauncher = $found[0]; Write-Host "Home is Android's chooser; the stock launcher among the candidates is $StockLauncher." }
         else { throw "Home is Android's launcher chooser and $($found.Count) known stock launchers claim Home: pick a default on the TV first, or run again with -StockLauncher <package to disable> or -StockLauncher none." }
@@ -100,10 +101,14 @@ function Undo-Handover {
     }
     $ErrorActionPreference = 'Continue'
     & $py -I ..\tools\tv.py "pm enable --user 0 $StockLauncher" 2>$null | Out-Null
+    $enableExit = $LASTEXITCODE
+    if ($enableExit -ne 0) { Write-Warning "stock launcher enable failed (exit code $enableExit); checking recovery" }
     # set-home-activity needs pkg/activity on Android 9, so resolve the stock component on the TV.
     & $py -I ..\tools\tv.py "cmd package set-home-activity --user 0 `$(cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.HOME $StockLauncher | tail -n 1)" 2>$null | Out-Null
+    $setHomeExit = $LASTEXITCODE
+    if ($setHomeExit -ne 0) { Write-Warning "stock Home restore failed (exit code $setHomeExit); checking recovery" }
     $back = Get-HomeNow
-    if ($back -like "$StockLauncher/*") { Write-Warning "$StockLauncher owns Home again."; return $true }
+    if ($enableExit -eq 0 -and $setHomeExit -eq 0 -and $back -like "$StockLauncher/*") { Write-Warning "$StockLauncher owns Home again."; return $true }
     $homeDir = if ($env:USERPROFILE) { $env:USERPROFILE } elseif ($env:HOME) { $env:HOME } else { (Get-Location).Path }
     $rec = Join-Path $homeDir ("cleanyourtv-handover-" + ($TvHost -replace '[^A-Za-z0-9._-]', '_') + '.txt')
     $lines = @(

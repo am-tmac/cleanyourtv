@@ -26,10 +26,11 @@ def block(text, start, end):
 
 
 class TileOptionsContractTest(unittest.TestCase):
-    def test_version_is_experimental_4_code_7(self):
+    def test_version_is_experimental_8_code_11(self):
+        # This release intentionally advances experimental.4/code 7 to experimental.8/code 11.
         gradle = (ROOT / 'app/build.gradle').read_text()
-        self.assertIn('versionCode 7', gradle)
-        self.assertIn("versionName '2.3-vidda-experimental.4'", gradle)
+        self.assertIn('versionCode 11', gradle)
+        self.assertIn("versionName '2.3-vidda-experimental.8'", gradle)
 
     def test_long_press_on_any_tile_opens_options_not_app_details(self):
         adapter = (JAVA / 'AppAdapter.java').read_text()
@@ -93,7 +94,8 @@ class TileOptionsContractTest(unittest.TestCase):
         main = (JAVA / 'MainActivity.java').read_text()
         body = block(main, 'private void showSettingsMenu()', 'private void addSettingsMenuRow(')
         rows = re.findall(r'addSettingsMenuRow\(rows, popup, R\.string\.(\w+)', body)
-        self.assertEqual(['launcher_settings', 'module_cards', 'reorder', 'app_management'], rows)
+        # Upstream adds dock editing before reorder; retain its row as well as Vidda app management.
+        self.assertEqual(['launcher_settings', 'module_cards', 'dock_edit', 'reorder', 'app_management'], rows)
         self.assertTrue((JAVA / 'JuosHomeRedirectPolicy.java').exists())
 
 

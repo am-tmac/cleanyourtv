@@ -41,7 +41,13 @@ class JuosContractTest(unittest.TestCase):
     def test_settings_offer_opt_in_and_user_authorization(self):
         text = (MAIN / 'java/com/gathin/tvhome/LauncherSettingsActivity.java').read_text()
         self.assertIn('JuosHomeRedirectService.ENABLED', text)
-        self.assertIn('Settings.ACTION_ACCESSIBILITY_SETTINGS', text)
+        # AccessibilitySettingsRoute now owns the standard action and JUOS fallback; verify wiring
+        # and the actual action instead of requiring an obsolete inline constant in the Activity.
+        self.assertIn('AccessibilitySettingsRoute.candidates()', text)
+        self.assertIn('if (tryStart(intent)) return;', text)
+        route = (MAIN / 'java/com/gathin/tvhome/AccessibilitySettingsRoute.java').read_text()
+        self.assertIn('android.settings.ACCESSIBILITY_SETTINGS', route)
+        self.assertIn('com.android.tv.settings.system.AccessibilityActivity', route)
         self.assertIn('protected void onResume()', text)
         layout = ET.parse(MAIN / 'res/layout/activity_launcher_settings.xml').getroot()
         ids = {n.get(A+'id') for n in layout.iter()}

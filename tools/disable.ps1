@@ -93,11 +93,11 @@ if (-not $env:FORCE_HOME -and $pkgs.Count -gt 0) {
     if ($LASTEXITCODE -ne 0) { $homeLine = '' }
     $ErrorActionPreference = 'Stop'
     $homePkg = "$homeLine".Trim() -split '/' | Select-Object -First 1
-    if ($homePkg -and $homePkg -ne 'android') {
+    if ($homePkg -match '^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)+$') {
         if ($pkgs -contains $homePkg) {
             $found = Read-HomeLaunchers
             $others = @(@($found.Launchers) | Where-Object { $_ -ne $homePkg -and $pkgs -notcontains $_ })
-            if ($others.Count -eq 0) {
+            if (-not $found.Ok -or $others.Count -eq 0) {
                 Write-Warning "Skipping ${homePkg}: it owns Home, and no other app that can answer Home is installed and staying enabled. Make the new launcher Home first (launcher\build-and-install.ps1), then run this list again to disable the old one; or set `$env:FORCE_HOME=1 if you can still reach the TV."
                 $pkgs = @($pkgs | Where-Object { $_ -ne $homePkg })
             }

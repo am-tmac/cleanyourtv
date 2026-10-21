@@ -22,7 +22,7 @@ USAGE = "usage: b64push.py <local file> <remote path>\n"
 
 
 def safe_remote(path):
-    return bool(REMOTE_RE.fullmatch(path)) and ".." not in path.split("/") and not path.endswith("/")
+    return bool(REMOTE_RE.fullmatch(path)) and ".." not in path and not path.endswith("/")
 
 
 def q(path):
@@ -50,11 +50,11 @@ def main():
     import tv  # noqa: E402
 
     dev = tv.connect()
+    b64 = remote + ".b64.part"
+    part = remote + ".part"
     try:
         chunk = min(CHUNK, dev.max_chunk_size * 3 // 4 - 64)   # base64 of the chunk plus the echo must fit one payload
         chunk -= chunk % 3   # a multiple of 3, or each chunk ends in '=' padding mid-stream and base64 -d corrupts it
-        b64 = remote + ".b64.part"
-        part = remote + ".part"
         # Only our own temporary names are cleared; the target stays until the copy is verified.
         # `: >` creates the base64 file even for an empty upload, so `base64 -d` has an input.
         dev.shell(f"rm -f {q(b64)} {q(part)} && : > {q(b64)}")
@@ -85,7 +85,14 @@ def main():
             return 1
         return 0
     finally:
-        dev.close()
+        # Exceptions (including interrupted transfers) must also clear staging. A disconnected TV
+        # may refuse cleanup; report that without hiding the original failure or deleting the target.
+        try:
+            dev.shell(f"rm -f {q(b64)} {q(part)}")
+        except Exception as error:
+            print(f"could not remove temporary upload files: {error}", file=sys.stderr)
+        finally:
+            dev.close()
 
 
 if __name__ == "__main__":

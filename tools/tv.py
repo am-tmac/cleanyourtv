@@ -11,9 +11,6 @@ Set TV_HOST to the TV's IP. Usage:
 import os
 import sys
 
-from adb_shell.adb_device import AdbDeviceTcp
-from adb_shell.auth.keygen import keygen
-from adb_shell.auth.sign_pythonrsa import PythonRSASigner
 
 # Windows consoles often use an old code page (cp1251, cp1252 and others) that cannot print every character
 # in dumpsys output. Python then stops with an error in the middle. disable.ps1 reads this output to see if
@@ -28,6 +25,16 @@ USAGE = (
     "usage: tv.py --probe | tv.py <shell command...> | tv.py --batch < commands.txt\n"
     "       tv.py --push <local> <remote> | tv.py --pull <remote> <local>\n"
 )
+
+
+# CLI usage errors precede configuration and optional transport imports.
+if __name__ == "__main__" and sys.argv[1:2] in (["--push"], ["--pull"]) and len(sys.argv) != 4:
+    sys.stderr.write(USAGE)
+    sys.exit(2)
+
+from adb_shell.adb_device import AdbDeviceTcp
+from adb_shell.auth.keygen import keygen
+from adb_shell.auth.sign_pythonrsa import PythonRSASigner
 
 
 def parse_port(text):

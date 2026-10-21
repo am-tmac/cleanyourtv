@@ -54,7 +54,7 @@ if (-not (Test-Path $config)) { throw "no config.json in $Theme" }
 try { Get-Content $config -Raw | ConvertFrom-Json | Out-Null } catch { throw "$config is not valid JSON" }
 
 # Tolerated, as in theme.sh: a TV that locks Android/data still takes the files through ThemeProvider.
-& $py -I tv.py "mkdir -p $dir 2>/dev/null" | Out-Null
+Invoke-Tv tv.py "mkdir -p $dir 2>/dev/null; true" | Out-Null
 Invoke-Tv tv.py --push $config "$tmp-config.json" | Out-Null
 Invoke-Tv tv.py (Put 'config.json')
 $wall = Join-Path $Theme 'wallpaper.jpg'

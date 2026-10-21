@@ -20,11 +20,12 @@ def strings(locale):
 
 
 class AppManagementContractTest(unittest.TestCase):
-    def test_settings_menu_keeps_first_three_rows_and_adds_app_management_fourth(self):
+    def test_settings_menu_keeps_upstream_rows_and_app_management(self):
         main = (JAVA / 'MainActivity.java').read_text()
         body = main[main.index('private void showSettingsMenu()'):main.index('private void addSettingsMenuRow(')]
         rows = re.findall(r'addSettingsMenuRow\(rows, popup, R\.string\.(\w+)', body)
-        self.assertEqual(['launcher_settings', 'module_cards', 'reorder', 'app_management'], rows)
+        # Upstream adds dock editing before reorder; retain its row as well as Vidda app management.
+        self.assertEqual(['launcher_settings', 'module_cards', 'dock_edit', 'reorder', 'app_management'], rows)
         self.assertIn('this::showAppManagement', body)
 
     def test_localized_strings(self):

@@ -86,8 +86,10 @@ home_launchers() {
     | grep -vxF -e com.google.android.tungsten.setupwraith -e com.android.tv.settings -e com.android.settings -e com.android.provision || true
 }
 if [ -z "${FORCE_HOME:-}" ] && [ -n "$PKGS" ]; then
-  HOME_PKG=$("$PY" -I tools/tv.py "$HOME_QUERY" 2>/dev/null | tail -n 1 | tr -d '\r' | cut -d/ -f1 || true)
-  if [ -n "$HOME_PKG" ] && [ "$HOME_PKG" != android ]; then
+  HOME_PKG=$("$PY" -I tools/tv.py "$HOME_QUERY" 2>/dev/null | tail -n 1 | tr -d '\r' | cut -d/ -f1) || HOME_PKG=""
+  # Diagnostic text is not an owner; use the same fail-closed path as an empty answer.
+  if ! [[ "$HOME_PKG" =~ ^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)+$ ]]; then HOME_PKG=""; fi
+  if [ -n "$HOME_PKG" ]; then
     # The extra query is worth it only when the list holds Home's own package, which is how a list
     # that leaves the TV without a launcher looks before anything is disabled.
     # grep without -q: an early exit could SIGPIPE printf and fail open under pipefail (see above).
