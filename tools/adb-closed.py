@@ -22,10 +22,10 @@ def main():
     if not host:
         sys.stderr.write("usage: adb-closed.py <tv ip> [port]\n")
         return 2
-    try:
-        port = int(args[1] if len(args) == 2 else os.environ.get("TV_PORT", "5555"))
-    except ValueError:
-        sys.stderr.write(f"not a port number: {args[1]!r}\n")
+    port_text = args[1] if len(args) == 2 else os.environ.get("TV_PORT", "5555")
+    port = int(port_text) if port_text.strip().isdigit() else 0
+    if not 1 <= port <= 65535:
+        sys.stderr.write(f"not a port number from 1 to 65535: {port_text!r}\n")
         return 2
 
     try:

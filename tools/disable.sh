@@ -19,13 +19,21 @@ export MSYS_NO_PATHCONV=1
 # Refuse the whole list unless every entry is a bare package name (#165).
 # Normalise first: Notepad on Windows saves a BOM and CRLF, and without this the first "# TV" line
 # arrives as a package name and every entry keeps a trailing \r (#208).
-PKGS=$(LC_ALL=C awk 'NR==1{sub(/^\357\273\277/,"")} {sub(/\r$/,""); print}' "$LIST" \
-  | grep -vE '^\s*(#|$)' | sed -E 's/\s+#.*$//' | awk '{print $1}')
-BAD=$(printf '%s\n' "$PKGS" | grep -vE '^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)+$' || true)
+# Everything from the first '#' is a note, with or without a space before it, exactly as recovery.py
+# and disable.ps1 read the line. A line with two names used to lose the second one silently: refuse it.
+LINES=$(LC_ALL=C awk 'NR==1{sub(/^\357\273\277/,"")} {sub(/\r$/,""); sub(/#.*/,""); gsub(/^[ \t]+|[ \t]+$/,"")} $0 != "" {print NR ": " $0}' "$LIST")
+ENTRIES=$(printf '%s\n' "$LINES" | sed -E 's/^[0-9]+: //' | sed '/^$/d')
+BAD=$(printf '%s\n' "$ENTRIES" | tr ' \t' '\n\n' | sed '/^$/d' | grep -vE '^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)+$' || true)
 if [ -n "$BAD" ]; then
   { echo "refusing $LIST: not a package name:"; printf '%s\n' "$BAD" | sed 's/^/  /'; } >&2
   exit 1
 fi
+MULTI=$(printf '%s\n' "$LINES" | grep -E '^[0-9]+: [^ 	]+[ 	]+[^ 	]' || true)
+if [ -n "$MULTI" ]; then
+  { echo "refusing $LIST: one package name per line:"; printf '%s\n' "$MULTI" | sed 's/^/  line /'; } >&2
+  exit 1
+fi
+PKGS=$ENTRIES
 # A Wi-Fi network saved during the first-run wizard belongs to setupwraith, and Android deletes it the
 # moment setupwraith is disabled: the TV drops off Wi-Fi, and ADB and the phone remote go with it.
 # Skip it until the network has been forgotten and re-joined in Settings (it then belongs to
@@ -57,33 +65,77 @@ ADB_SECURE="$("$PY" -I tools/tv.py "getprop ro.adb.secure" 2>/dev/null | tr -d '
 # next time Home is pressed, and on Google TV the setup wizard can take the category instead and
 # crash-loop system_server (docs/TROUBLESHOOTING.md). Skip the owner while nothing else on the TV can
 # answer HOME; FORCE_HOME=1 disables it anyway, for a TV reachable another way.
-# The extra query is worth it only when the list holds Home's own package, which is how a list that
-# leaves the TV without a launcher looks before anything is disabled.
 HOME_QUERY='cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.HOME'
-HOME_PKG=$("$PY" -I tools/tv.py "$HOME_QUERY" 2>/dev/null | tail -n 1 | tr -d '\r' | cut -d/ -f1 || true)
-# grep without -q: an early exit could SIGPIPE printf and fail open under pipefail (see above).
-if [ -n "$HOME_PKG" ] && printf '%s\n' "$PKGS" | grep -xF "$HOME_PKG" >/dev/null && [ -z "${FORCE_HOME:-}" ]; then
-  # Every package with a HOME activity the TV can start now: disabled packages do not answer, so this
-  # is "what could take Home if the list went through".
-  CLAIMS=$("$PY" -I tools/tv.py 'cmd package query-activities --brief -a android.intent.action.MAIN -c android.intent.category.HOME' 2>/dev/null \
-    | tr -d '\r' | grep -oE '^ *[A-Za-z0-9_.]+/[A-Za-z0-9_.$]+' | sed -E 's/^ +//' | sort -u || true)
-  # Nothing left to answer Home once the list is applied, or the TV could not say who does: either
-  # way the owner is the only Home this run knows about, so it stays enabled.
-  # The setup wizard and the settings apps answer HOME too, but they are not launchers: on Google TV,
-  # setupwraith taking Home is the crash loop this guard exists to prevent. They don't count.
-  # A vendor's own fallback does not count either: TCL Android TV sets register
-  # com.tcl.keycustomfunctionservice/.FallbackHome (and com.android.tv.settings/.system.FallbackHome),
-  # a placeholder the firmware shows when no launcher is enabled, not a home the viewer can use.
-  OTHERS=$(printf '%s\n' "$CLAIMS" | grep -vE '/[^ ]*FallbackHome$' | cut -d/ -f1 | sort -u \
-    | grep -vxF "$HOME_PKG" | grep -vxF "$PKGS" \
-    | grep -vxF -e com.google.android.tungsten.setupwraith -e com.android.tv.settings -e com.android.settings -e com.android.provision || true)
-  if [ -z "$OTHERS" ]; then
-    echo "Skipping $HOME_PKG: it owns Home, and no other app that can answer Home is installed and" >&2
-    echo "staying enabled. Make the new launcher Home first (launcher/build-and-install.sh), then run" >&2
-    echo "this list again to disable the old one; or set FORCE_HOME=1 if you can still reach the TV." >&2
-    PKGS="$(printf '%s\n' "$PKGS" | grep -vxF "$HOME_PKG" || true)"
+CLAIM_QUERY='cmd package query-activities --brief -a android.intent.action.MAIN -c android.intent.category.HOME'
+# Launchers the install script knows as stock Home; the last resort when the TV cannot say who answers HOME.
+KNOWN_LAUNCHERS="com.google.android.tvlauncher com.google.android.apps.tv.launcherx com.google.android.leanbacklauncher com.mitv.tvhome"
+drop_pkg() { PKGS="$(printf '%s\n' "$PKGS" | grep -vxF "$1" || true)"; }
+# Every package with a usable HOME activity the TV can start now (disabled packages do not answer, so
+# this is "what could take Home if the list went through"); fails when the TV answers nothing.
+# The setup wizard and the settings apps answer HOME too, but they are not launchers: on Google TV,
+# setupwraith taking Home is the crash loop this guard exists to prevent. They don't count.
+# A vendor's own fallback does not count either: TCL Android TV sets register
+# com.tcl.keycustomfunctionservice/.FallbackHome (and com.android.tv.settings/.system.FallbackHome),
+# a placeholder the firmware shows when no launcher is enabled, not a home the viewer can use.
+home_launchers() {
+  local raw claims
+  raw=$("$PY" -I tools/tv.py "$CLAIM_QUERY" 2>/dev/null) || return 1
+  claims=$(printf '%s\n' "$raw" | tr -d '\r' | grep -oE '^ *[A-Za-z0-9_.]+/[A-Za-z0-9_.$]+' | sed -E 's/^ +//' | sort -u || true)
+  [ -n "$claims" ] || return 1
+  printf '%s\n' "$claims" | grep -vE '/[^ ]*FallbackHome$' | cut -d/ -f1 | sort -u \
+    | grep -vxF -e com.google.android.tungsten.setupwraith -e com.android.tv.settings -e com.android.settings -e com.android.provision || true
+}
+if [ -z "${FORCE_HOME:-}" ] && [ -n "$PKGS" ]; then
+  HOME_PKG=$("$PY" -I tools/tv.py "$HOME_QUERY" 2>/dev/null | tail -n 1 | tr -d '\r' | cut -d/ -f1 || true)
+  if [ -n "$HOME_PKG" ] && [ "$HOME_PKG" != android ]; then
+    # The extra query is worth it only when the list holds Home's own package, which is how a list
+    # that leaves the TV without a launcher looks before anything is disabled.
+    # grep without -q: an early exit could SIGPIPE printf and fail open under pipefail (see above).
+    if printf '%s\n' "$PKGS" | grep -xF "$HOME_PKG" >/dev/null; then
+      # Nothing left to answer Home once the list is applied, or the TV could not say who does: either
+      # way the owner is the only Home this run knows about, so it stays enabled.
+      LAUNCHERS=$(home_launchers || true)
+      OTHERS=$(printf '%s\n' "$LAUNCHERS" | sed '/^$/d' | grep -vxF "$HOME_PKG" | grep -vxF "$PKGS" || true)
+      if [ -z "$OTHERS" ]; then
+        echo "Skipping $HOME_PKG: it owns Home, and no other app that can answer Home is installed and" >&2
+        echo "staying enabled. Make the new launcher Home first (launcher/build-and-install.sh), then run" >&2
+        echo "this list again to disable the old one; or set FORCE_HOME=1 if you can still reach the TV." >&2
+        drop_pkg "$HOME_PKG"
+      fi
+    fi
+  else
+    # No single owner: Android's chooser ("android", launchers tie), or the query failed or answered
+    # nothing. Skipping the guard here would let a list take every launcher, so fail closed: judge by
+    # the HOME claimants, and if the TV cannot list those either, keep every known stock launcher.
+    if LAUNCHERS=$(home_launchers); then
+      LISTED=$(printf '%s\n' "$LAUNCHERS" | sed '/^$/d' | grep -xF "$PKGS" || true)
+      OTHERS=$(printf '%s\n' "$LAUNCHERS" | sed '/^$/d' | grep -vxF "$PKGS" || true)
+      if [ -n "$LISTED" ] && [ -z "$OTHERS" ]; then
+        for p in $LISTED; do
+          echo "Skipping $p: Home has no default (${HOME_PKG:-no answer}), and once the list is applied no other" >&2
+          echo "app could answer Home. Make the new launcher Home first, or set FORCE_HOME=1." >&2
+          drop_pkg "$p"
+        done
+      fi
+    else
+      for p in $KNOWN_LAUNCHERS; do
+        printf '%s\n' "$PKGS" | grep -xF "$p" >/dev/null || continue
+        echo "Skipping $p: could not ask the TV which apps answer Home, and it is a stock launcher." >&2
+        echo "Run again once the TV answers, or set FORCE_HOME=1 if you can still reach the TV." >&2
+        drop_pkg "$p"
+      done
+    fi
   fi
 fi
+
+# Two packages people usually want to keep. Not refused: a note, so the choice is a conscious one.
+for p in com.google.android.katniss com.google.android.tv; do
+  printf '%s\n' "$PKGS" | grep -xF "$p" >/dev/null || continue
+  case "$p" in
+    com.google.android.katniss) echo "Note: $p is the voice assistant (remote mic / voice search); it stops working while disabled." >&2 ;;
+    com.google.android.tv) echo "Note: $p is Live Channels (Live TV / tuner guide); the tuner app stops working while disabled." >&2 ;;
+  esac
+done
 
 # Only the package's own "requested permissions" block counts: a vendor app in a shared UID would otherwise
 # match through its shared user's permissions and be skipped by mistake.

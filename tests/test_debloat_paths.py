@@ -65,7 +65,9 @@ class DebloatPathsTest(unittest.TestCase):
         # No TV_HOST, so recovery.py looks for a record that cannot exist: that is the fallback these
         # tests exercise. HOME is isolated so a record from a real run cannot answer instead.
         env = {k: v for k, v in os.environ.items() if k != "TV_HOST"}
-        env.update(CAPTURE=str(capture), HOME=str(home))
+        # The no-record fallback needs an explicit opt-in since review item L7; these tests are about
+        # how the list is read, so they opt in deliberately (test_recovery_record covers the refusal).
+        env.update(CAPTURE=str(capture), HOME=str(home), CLEANYOURTV_RESTORE_WITHOUT_RECORD="1")
         result = subprocess.run(
             ["bash", str(script_path), argument], cwd=cwd, env=env,
             capture_output=True, text=True,

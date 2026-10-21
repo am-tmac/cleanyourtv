@@ -17,11 +17,26 @@ if (-not (Test-Path $py)) { throw 'run: python -m venv tools\venv; tools\venv\Sc
 if (-not $TvHost) { throw 'pass -TvHost <tv ip> or set $env:TV_HOST' }
 $env:TV_HOST = $TvHost
 
-$pkgs = Get-Content $List | ForEach-Object { ($_ -replace '#.*$', '').Trim() } | Where-Object { $_ } | ForEach-Object { ($_ -split '\s+')[0] }
+# Same reading as disable.sh and recovery.py: everything from the first '#' is a note, and a line holds
+# exactly one package name (a second one used to be dropped silently).
 # Lists come from contributors and each name is pasted into a shell command on the TV (#165).
-$bad = @($pkgs | Where-Object { $_ -notmatch '^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)+$' })
+$lineNo = 0
+$bad = @()
+$multi = @()
+$pkgs = @(foreach ($raw in Get-Content $List) {
+    $lineNo++
+    $line = ($raw -replace '#.*$', '').Trim()
+    if (-not $line) { continue }
+    $tokens = @($line -split '\s+')
+    $bad += @($tokens | Where-Object { $_ -notmatch '^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)+$' })
+    if ($tokens.Count -gt 1) { $multi += "line ${lineNo}: $line" }
+    $tokens[0]
+})
 if ($bad.Count -gt 0) {
     throw "refusing $List, not a package name: $($bad -join ', ')"
+}
+if ($multi.Count -gt 0) {
+    throw "refusing $List, one package name per line: $($multi -join '; ')"
 }
 # A Wi-Fi network saved during the first-run wizard belongs to setupwraith, and Android deletes it when
 # setupwraith is disabled. Skip it while it owns the saved network; `$env:FORCE_SETUPWRAITH=1` overrides.
@@ -48,32 +63,69 @@ $ErrorActionPreference = 'Stop'
 
 # Home guard (#239), the same check as disable.sh: a list that disables the app owning Home leaves the
 # TV with nothing to start Home with. Skip the owner while nothing else on the TV can answer HOME;
-# `$env:FORCE_HOME=1` disables it anyway, for a TV reachable another way.
-if (-not $env:FORCE_HOME) {
+# `$env:FORCE_HOME=1` disables it anyway, for a TV reachable another way. With no single owner (Android's
+# chooser "android", or a failed/empty answer) the guard fails closed instead of being skipped.
+$tvPy = Join-Path $repo 'tools\tv.py'
+$claimQuery = 'cmd package query-activities --brief -a android.intent.action.MAIN -c android.intent.category.HOME'
+# The setup wizard and the settings apps answer HOME too, but they are not launchers (disable.sh).
+$notLaunchers = @('com.google.android.tungsten.setupwraith', 'com.android.tv.settings', 'com.android.settings', 'com.android.provision')
+$knownLaunchers = @('com.google.android.tvlauncher', 'com.google.android.apps.tv.launcherx', 'com.google.android.leanbacklauncher', 'com.mitv.tvhome')
+# Usable HOME claimants the TV can start now; Ok is false when the TV could not list any.
+function Read-HomeLaunchers {
+    # Windows PowerShell turns redirected stderr into an error that 'Stop' would throw (see getprop).
+    $ErrorActionPreference = 'Continue'
+    $lines = @(& $py -I $tvPy $claimQuery 2>$null)
+    $answered = $LASTEXITCODE -eq 0
+    # Keep the class: a vendor fallback is named FallbackHome and is not a usable launcher
+    # (TCL Android TV sets register com.tcl.keycustomfunctionservice/.FallbackHome).
+    # Trim first: a trailing CR from the TV would stop the `$` anchor from matching any line.
+    $parsed = @($lines | ForEach-Object {
+        if ("$_".Trim() -match '^([A-Za-z0-9_.]+)/([A-Za-z0-9_.$]+)$') { [pscustomobject]@{ Pkg = $Matches[1]; Cls = $Matches[2] } }
+    })
+    $usable = @($parsed | Where-Object { $_.Cls -notmatch 'FallbackHome$' -and $notLaunchers -notcontains $_.Pkg } |
+        ForEach-Object { $_.Pkg } | Sort-Object -Unique)
+    [pscustomobject]@{ Ok = ($answered -and $parsed.Count -gt 0); Launchers = $usable }
+}
+if (-not $env:FORCE_HOME -and $pkgs.Count -gt 0) {
     $homeQuery = 'cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.HOME'
-    $homeLine = @(& $py -I (Join-Path $repo 'tools\tv.py') $homeQuery) |
-        Where-Object { $_ -match '\S' } | Select-Object -Last 1
+    $ErrorActionPreference = 'Continue'
+    $homeLine = @(& $py -I $tvPy $homeQuery 2>$null) | Where-Object { $_ -match '\S' } | Select-Object -Last 1
+    if ($LASTEXITCODE -ne 0) { $homeLine = '' }
+    $ErrorActionPreference = 'Stop'
     $homePkg = "$homeLine".Trim() -split '/' | Select-Object -First 1
-    if ($homePkg -and ($pkgs -contains $homePkg)) {
-        # Every package with a HOME activity the TV can start now; a disabled one does not answer.
-        $claimQuery = 'cmd package query-activities --brief -a android.intent.action.MAIN -c android.intent.category.HOME'
-        $claims = @(& $py -I (Join-Path $repo 'tools\tv.py') $claimQuery | ForEach-Object {
-            # Keep the class: a vendor fallback is named FallbackHome and is not a usable launcher
-            # (TCL Android TV sets register com.tcl.keycustomfunctionservice/.FallbackHome).
-            # Trim first: a trailing CR from the TV would stop the `$` anchor from matching any line.
-            if ("$_".Trim() -match '^([A-Za-z0-9_.]+)/([A-Za-z0-9_.$]+)$') {
-                if ($Matches[2] -notmatch 'FallbackHome$') { $Matches[1] }
+    if ($homePkg -and $homePkg -ne 'android') {
+        if ($pkgs -contains $homePkg) {
+            $found = Read-HomeLaunchers
+            $others = @(@($found.Launchers) | Where-Object { $_ -ne $homePkg -and $pkgs -notcontains $_ })
+            if ($others.Count -eq 0) {
+                Write-Warning "Skipping ${homePkg}: it owns Home, and no other app that can answer Home is installed and staying enabled. Make the new launcher Home first (launcher\build-and-install.ps1), then run this list again to disable the old one; or set `$env:FORCE_HOME=1 if you can still reach the TV."
+                $pkgs = @($pkgs | Where-Object { $_ -ne $homePkg })
             }
-        } | Sort-Object -Unique)
-        # The setup wizard and the settings apps answer HOME too, but they are not launchers (disable.sh).
-        $notLaunchers = @('com.google.android.tungsten.setupwraith', 'com.android.tv.settings', 'com.android.settings', 'com.android.provision')
-        $others = @($claims | Where-Object { $_ -ne $homePkg -and $pkgs -notcontains $_ -and $notLaunchers -notcontains $_ })
-        if ($others.Count -eq 0) {
-            Write-Warning "Skipping ${homePkg}: it owns Home, and no other app that can answer Home is installed and staying enabled. Make the new launcher Home first (launcher\build-and-install.ps1), then run this list again to disable the old one; or set `$env:FORCE_HOME=1 if you can still reach the TV."
-            $pkgs = @($pkgs | Where-Object { $_ -ne $homePkg })
+        }
+    } else {
+        $found = Read-HomeLaunchers
+        if ($found.Ok) {
+            $listed = @(@($found.Launchers) | Where-Object { $pkgs -contains $_ })
+            $others = @(@($found.Launchers) | Where-Object { $pkgs -notcontains $_ })
+            if ($listed.Count -gt 0 -and $others.Count -eq 0) {
+                foreach ($p in $listed) {
+                    Write-Warning "Skipping ${p}: Home has no default ($(if ($homePkg) { $homePkg } else { 'no answer' })), and once the list is applied no other app could answer Home. Make the new launcher Home first, or set `$env:FORCE_HOME=1."
+                    $pkgs = @($pkgs | Where-Object { $_ -ne $p })
+                }
+            }
+        } else {
+            foreach ($p in $knownLaunchers) {
+                if ($pkgs -contains $p) {
+                    Write-Warning "Skipping ${p}: could not ask the TV which apps answer Home, and it is a stock launcher. Run again once the TV answers, or set `$env:FORCE_HOME=1 if you can still reach the TV."
+                    $pkgs = @($pkgs | Where-Object { $_ -ne $p })
+                }
+            }
         }
     }
 }
+# Two packages people usually want to keep (disable.sh). Not refused: a note, so the choice is conscious.
+if ($pkgs -contains 'com.google.android.katniss') { Write-Warning 'Note: com.google.android.katniss is the voice assistant (remote mic / voice search); it stops working while disabled.' }
+if ($pkgs -contains 'com.google.android.tv') { Write-Warning 'Note: com.google.android.tv is Live Channels (Live TV / tuner guide); the tuner app stops working while disabled.' }
 # Same as disable.sh (#321): a package that asks for android.permission.TV_INPUT_HARDWARE is the software
 # layer under the HDMI, AV and tuner inputs. Disable one and the port still notices the cable but shows
 # "No Signal" for good; re-enabling the pieces in batches does not bring the picture back, a full restore
@@ -105,7 +157,10 @@ if ($LASTEXITCODE -ne 0) { throw 'no recovery record was written, so nothing was
 
 $cmds = @($pkgs | ForEach-Object { "pm disable-user --user 0 $_" }) + 'pm list packages -d'
 $cmds | & $py -I (Join-Path $repo 'tools\tv.py') --batch
+$batchExit = $LASTEXITCODE
 
 if ($adbSecure -eq '0') {
     Write-Warning "This TV reports ro.adb.secure=0, so network ADB on port 5555 accepts any device on your network without the `"Allow`" prompt. When you are done, turn USB debugging and Network/ADB debugging off on the TV and reboot it (README: `"Isn't ADB access a security hole?`")."
 }
+if ($batchExit -ne 0) { throw "tv.py --batch failed (exit code $batchExit): the list may be only partly applied; run it again once the TV answers" }
+

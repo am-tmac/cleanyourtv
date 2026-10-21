@@ -7,9 +7,19 @@ cd "$(dirname "$0")"
 export JAVA_HOME="${JAVA_HOME:-$(/usr/libexec/java_home -v 17 2>/dev/null || { [ -d /opt/homebrew/opt/openjdk@17 ] && echo /opt/homebrew/opt/openjdk@17; } || java -XshowSettings:properties -version 2>&1 | awk '/java.home/ {print $3}')}"
 # Android Studio's default SDK location on macOS, then on Linux, then Homebrew's command-line tools.
 export ANDROID_HOME="${ANDROID_HOME:-$(for d in ~/Library/Android/sdk ~/Android/Sdk; do [ -d "$d" ] && echo "$d" && break; done)}"
-export ANDROID_HOME="${ANDROID_HOME:-/opt/homebrew/share/android-commandlinetools}"
+if [ -z "${ANDROID_HOME:-}" ] && [ -d /opt/homebrew/share/android-commandlinetools ]; then
+  export ANDROID_HOME=/opt/homebrew/share/android-commandlinetools
+fi
+if [ -z "${ANDROID_HOME:-}" ] || [ ! -d "$ANDROID_HOME" ]; then
+  echo "ERROR: no Android SDK found${ANDROID_HOME:+ at ANDROID_HOME=$ANDROID_HOME}. Install Android Studio or the" >&2
+  echo "command-line tools, then set ANDROID_HOME to the SDK folder and run this again." >&2
+  exit 1
+fi
 export PATH="$JAVA_HOME/bin:$PATH"
-[ -f local.properties ] || echo "sdk.dir=$ANDROID_HOME" > local.properties
+# sdk.dir follows the SDK of this run: a file written once kept pointing at an SDK that had moved.
+# Other lines in local.properties are kept as they are.
+{ [ -f local.properties ] && grep -v '^sdk\.dir=' local.properties || true; echo "sdk.dir=$ANDROID_HOME"; } > local.properties.tmp
+mv -f local.properties.tmp local.properties
 ./gradlew assembleRelease -q --console=plain
 TOOLS="$(cd ../tools && pwd)"   # absolute, so the venv's Python doesn't warn about "../" in its prefix
 PY=$TOOLS/venv/bin/python

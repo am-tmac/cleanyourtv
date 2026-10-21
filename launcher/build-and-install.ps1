@@ -27,9 +27,13 @@ if (-not $env:JAVA_HOME -or -not (Test-Path "$env:JAVA_HOME\bin\java.exe")) {
     $env:JAVA_HOME = $jbr
 }
 $sdk = if ($env:ANDROID_HOME) { $env:ANDROID_HOME } else { "$env:LOCALAPPDATA\Android\Sdk" }
-if (-not (Test-Path local.properties)) {
-    "sdk.dir=$($sdk -replace '\\', '\\')" | Out-File -Encoding ascii local.properties
-}
+if (-not (Test-Path $sdk -PathType Container)) { throw "no Android SDK at '$sdk': install Android Studio or set ANDROID_HOME to the SDK folder" }
+# sdk.dir follows the SDK of this run (as in build-and-install.sh); other lines are kept. The -replace
+# doubles each backslash, which is how a .properties file spells one.
+$props = @()
+if (Test-Path local.properties) { $props = @(Get-Content local.properties | Where-Object { $_ -notmatch '^sdk\.dir=' }) }
+$props += "sdk.dir=$($sdk -replace '\\', '\\')"
+$props | Out-File -Encoding ascii local.properties
 
 .\gradlew.bat assembleRelease -q --console=plain
 if ($LASTEXITCODE -ne 0) { throw 'Gradle build failed' }
@@ -62,32 +66,66 @@ $apk = 'app\build\outputs\apk\release\app-release.apk'
 if ($LASTEXITCODE -ne 0) { throw 'APK upload failed' }
 $out = & $py -I ..\tools\tv.py 'pm install -r /data/local/tmp/tvhome.apk; rm -f /data/local/tmp/tvhome.apk'
 Write-Host $out
-if ("$out" -notmatch 'Success') { throw 'pm install failed; the stock launcher was left untouched' }
-# Android 9 only accepts a component here; Android 10+ also takes a bare package name.
-$out = & $py -I ..\tools\tv.py 'cmd package set-home-activity --user 0 com.gathin.tvhome/.MainActivity'
-Write-Host $out
-if ("$out" -match 'Error') { throw 'could not set the new launcher as home; the stock launcher was left untouched' }
-# Start the launcher on its own, before the stock Home is touched (see build-and-install.sh, #239):
-# in the batch a failed start only prints an Error line and the stock launcher would be disabled anyway.
+if ($LASTEXITCODE -ne 0 -or "$out" -notmatch 'Success') { throw 'pm install failed; the stock launcher was left untouched' }
+# Same order as build-and-install.sh: start the launcher on its own before the stock Home is touched
+# (#239); in the batch a failed start only prints an Error line and the stock launcher would be
+# disabled anyway. The Home preference is set in the batch, after the stock launcher is disabled.
 $start = (& $py -I ..\tools\tv.py 'am start -W -n com.gathin.tvhome/.MainActivity') -join "`n"
 Write-Host $start
-if ($start -notmatch 'Status: ok' -or $start -match '(?m)^Error') { throw "the new launcher did not start (see above); $StockLauncher was left enabled" }
+if ($LASTEXITCODE -ne 0 -or $start -notmatch 'Status: ok' -or $start -match '(?m)^Error') { throw "the new launcher did not start (see above); $StockLauncher was left enabled" }
 @(
     'pm grant com.gathin.tvhome android.permission.ACCESS_FINE_LOCATION 2>/dev/null; echo location-granted',
     'cmd package compile -m speed -f com.gathin.tvhome',
     $disableStock,
     'cmd package set-home-activity --user 0 com.gathin.tvhome/.MainActivity'
 ) | & $py -I ..\tools\tv.py --batch
+# A failed batch is not fatal here: the stock launcher may already be disabled, so fall through to the
+# Home check, which rolls back when Home is not ours.
+if ($LASTEXITCODE -ne 0) { Write-Warning "tv.py --batch failed (exit code $LASTEXITCODE); checking where Home ended up" }
+
+$homeQuery = 'cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.HOME'
+# Home's owner, or '' when the TV cannot be reached: $null.Trim() would throw past the rollback.
+function Get-HomeNow {
+    $ErrorActionPreference = 'Continue'
+    $line = @(& $py -I ..\tools\tv.py $homeQuery 2>$null) | Where-Object { $_ -match '\S' } | Select-Object -Last 1
+    if ($LASTEXITCODE -ne 0) { return '' }
+    "$line".Trim()
+}
+# Put the stock launcher back and check that it took. A TV whose new Home does not start can only be
+# rescued over ADB, so the commands also go into a local file (build-and-install.sh does the same).
+function Undo-Handover {
+    if ($StockLauncher -eq 'none') {
+        Write-Warning 'Home is not the new launcher, and no stock launcher was disabled; nothing to roll back.'
+        return $false
+    }
+    $ErrorActionPreference = 'Continue'
+    & $py -I ..\tools\tv.py "pm enable --user 0 $StockLauncher" 2>$null | Out-Null
+    # set-home-activity needs pkg/activity on Android 9, so resolve the stock component on the TV.
+    & $py -I ..\tools\tv.py "cmd package set-home-activity --user 0 `$(cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.HOME $StockLauncher | tail -n 1)" 2>$null | Out-Null
+    $back = Get-HomeNow
+    if ($back -like "$StockLauncher/*") { Write-Warning "$StockLauncher owns Home again."; return $true }
+    $homeDir = if ($env:USERPROFILE) { $env:USERPROFILE } elseif ($env:HOME) { $env:HOME } else { (Get-Location).Path }
+    $rec = Join-Path $homeDir ("cleanyourtv-handover-" + ($TvHost -replace '[^A-Za-z0-9._-]', '_') + '.txt')
+    $lines = @(
+        "# cleanyourtv: the launcher handover on $TvHost did not finish. From the repo root:",
+        "tools\venv\Scripts\python.exe tools\tv.py 'pm enable --user 0 $StockLauncher'   # with `$env:TV_HOST='$TvHost'",
+        "tools\venv\Scripts\python.exe tools\tv.py 'cmd package set-home-activity --user 0 `$(cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.HOME $StockLauncher | tail -n 1)'",
+        "# then check: tools\venv\Scripts\python.exe tools\tv.py '$homeQuery'"
+    )
+    try { $lines | Out-File -Encoding ascii $rec } catch { $rec = '' }
+    Write-Warning "recovery is incomplete; Home still resolves to '$(if ($back) { $back } else { 'nothing' })'."
+    if ($rec) { Write-Warning "The commands that finish it are in $rec; the TV still needs ADB for them." }
+    else { Write-Warning "Re-run once the TV answers: pm enable --user 0 $StockLauncher, then set its Home activity." }
+    return $false
+}
 # Order matters, see build-and-install.sh: start the new launcher, disable the stock one, set the
 # preference last, then check where Home ended up and put the stock launcher back if it is not ours.
-$homeNow = (& $py -I ..\tools\tv.py 'cmd package resolve-activity --brief -c android.intent.category.HOME -a android.intent.action.MAIN' | Select-Object -Last 1).Trim()
+$homeNow = Get-HomeNow
 if ($homeNow -notlike 'com.gathin.tvhome/*') {
-    if ($StockLauncher -ne 'none') {
-        & $py -I ..\tools\tv.py "pm enable --user 0 $StockLauncher" | Out-Null
-        # set-home-activity needs pkg/activity on Android 9, so resolve the stock component on the TV.
-        & $py -I ..\tools\tv.py "cmd package set-home-activity --user 0 `$(cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.HOME $StockLauncher | tail -n 1)" | Out-Null
-    }
-    throw "Home resolves to '$homeNow', not to the new launcher; $StockLauncher was re-enabled. On Google TV this usually means com.google.android.tungsten.setupwraith also claims Home: add it to your debloat list (see README, Troubleshooting), apply it, then run this script again."
+    $reason = if ($homeNow) { "Home resolves to '$homeNow', not to the new launcher" } else { 'the TV stopped answering while Home was being switched, so the outcome is unknown' }
+    $restored = Undo-Handover
+    $hint = if ($homeNow) { ' On Google TV this usually means com.google.android.tungsten.setupwraith also claims Home: add it to your debloat list (see README, Troubleshooting), apply it, then run this script again.' } else { '' }
+    throw "$reason; $(if ($restored) { "$StockLauncher was re-enabled." } else { 'recovery is incomplete (see above).' })$hint"
 }
 Write-Host "Home now resolves to $homeNow"
 # Optional accessibility services, appended to enabled_accessibility_services without dropping others.
@@ -97,6 +135,7 @@ function Enable-Service([string]$Name) {
     # TV's shell then fails with "no closing quote" while the service stays off.
     ('s=$(settings get secure enabled_accessibility_services); case "$s" in *' + $Name + '*) ;; null|"") settings put secure enabled_accessibility_services ' + $svc + ' ;; *) settings put secure enabled_accessibility_services "$s:' + $svc + '" ;; esac; settings put secure accessibility_enabled 1; echo ' + $Name + ' enabled') |
         & $py -I ..\tools\tv.py --batch
+    if ($LASTEXITCODE -ne 0) { throw "could not enable $Name (tv.py exit code $LASTEXITCODE); Home is already the new launcher" }
 }
 if ($InputKeyService) { Enable-Service 'InputKeyService' }
 if ($HomeKeyService) { Enable-Service 'HomeKeyService' }

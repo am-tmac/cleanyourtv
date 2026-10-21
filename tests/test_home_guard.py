@@ -46,6 +46,10 @@ def save():
         json.dump(state, f)
 
 
+class Fail(Exception):
+    pass
+
+
 def answer(command):
     if command == "pm list packages":
         return "".join(f"package:{name}\n" for name in state["installed"])
@@ -53,11 +57,11 @@ def answer(command):
         return "".join(f"package:{name}\n" for name in state["disabled"])
     if command.startswith("cmd package query-activities"):
         if state["claims_fail"]:
-            sys.exit(1)
+            raise Fail()
         return "".join(f"  {c if '/' in c else c + '/.MainActivity'}\n" for c in state["claims"])
     if command.startswith("cmd package resolve-activity"):
         if state["home_fails"]:
-            sys.exit(1)
+            raise Fail()
         return (state["home"] or "") + "\n"
     if command.startswith("settings get global "):
         return "null\n"
@@ -66,7 +70,11 @@ def answer(command):
 
 class Device:
     def shell(self, command, read_timeout_s=None):
-        return answer(command)
+        # recovery.py's own queries: a failing one answers nothing, as adb_shell would on a bad reply.
+        try:
+            return answer(command)
+        except Fail:
+            return ""
 
     def close(self):
         pass
@@ -86,7 +94,10 @@ def main():
                 state["commands"].append(line)
         save()
         return 0
-    print(answer(args[-1]), end="")
+    try:
+        print(answer(args[-1]), end="")
+    except Fail:
+        return 1   # tools/tv.py exits non-zero when the TV does not answer
     return 0
 
 
@@ -247,6 +258,97 @@ class HomeGuardTest(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, self.output(result))
                 self.assertIn(f"pm disable-user --user 0 {STOCK}", sent)
                 self.assertNotIn("Skipping", self.output(result))
+
+
+    # Review M1: Android's chooser ("android") or a failed/empty resolve used to skip the guard
+    # entirely, so a list holding the only launcher went through. Without a known owner the guard now
+    # falls back to the HOME claimants, and without those to the known stock launchers.
+    def test_chooser_answer_still_keeps_the_only_launcher(self):
+        for entry in self.entries():
+            with self.subTest(entry=entry):
+                self.tv(home="android", claims=[STOCK, "com.android.tv.settings"])
+                result, sent = self.disable(entry)
+                self.assertEqual(result.returncode, 0, self.output(result))
+                self.assertNotIn(f"pm disable-user --user 0 {STOCK}", sent,
+                                 "the chooser answer must not switch the Home guard off")
+                self.assertIn(f"Skipping {STOCK}", self.output(result))
+                self.assertIn("pm disable-user --user 0 com.example.before", sent)
+
+    def test_failed_resolve_still_keeps_the_only_launcher(self):
+        for entry in self.entries():
+            with self.subTest(entry=entry):
+                self.tv(home_fails=True)
+                result, sent = self.disable(entry)
+                self.assertEqual(result.returncode, 0, self.output(result))
+                self.assertNotIn(f"pm disable-user --user 0 {STOCK}", sent)
+                self.assertIn(f"Skipping {STOCK}", self.output(result))
+
+    def test_empty_resolve_still_keeps_the_only_launcher(self):
+        for entry in self.entries():
+            with self.subTest(entry=entry):
+                self.tv(home="")
+                result, sent = self.disable(entry)
+                self.assertEqual(result.returncode, 0, self.output(result))
+                self.assertNotIn(f"pm disable-user --user 0 {STOCK}", sent)
+
+    def test_chooser_with_an_unlisted_launcher_lets_the_list_through(self):
+        for entry in self.entries():
+            with self.subTest(entry=entry):
+                self.tv(installed=["com.example.before", "com.example.after", STOCK, CUSTOM],
+                        home="android", claims=[STOCK, CUSTOM])
+                result, sent = self.disable(entry)
+                self.assertEqual(result.returncode, 0, self.output(result))
+                self.assertIn(f"pm disable-user --user 0 {STOCK}", sent)
+                self.assertNotIn("Skipping", self.output(result))
+
+    def test_chooser_with_only_a_vendor_fallback_keeps_the_launcher(self):
+        for entry in self.entries():
+            with self.subTest(entry=entry):
+                self.tv(home="android", claims=[STOCK, "com.tcl.keycustomfunctionservice/.FallbackHome"])
+                result, sent = self.disable(entry)
+                self.assertEqual(result.returncode, 0, self.output(result))
+                self.assertNotIn(f"pm disable-user --user 0 {STOCK}", sent)
+
+    def test_no_owner_and_no_claimants_keeps_known_launchers(self):
+        # Neither query answers: skip every listed known stock launcher, fail-closed, and say why.
+        self.write_list(["com.example.before", STOCK, "com.mitv.tvhome", "com.example.after"])
+        for entry in self.entries():
+            with self.subTest(entry=entry):
+                self.tv(home_fails=True, claims_fail=True)
+                result, sent = self.disable(entry)
+                self.assertEqual(result.returncode, 0, self.output(result))
+                self.assertNotIn(f"pm disable-user --user 0 {STOCK}", sent)
+                self.assertNotIn("pm disable-user --user 0 com.mitv.tvhome", sent)
+                self.assertIn("pm disable-user --user 0 com.example.before", sent)
+                self.assertIn("could not", self.output(result).lower())
+
+    def test_force_overrides_the_chooser_fallback(self):
+        for entry in self.entries():
+            with self.subTest(entry=entry):
+                self.tv(home="android", claims_fail=True)
+                result, sent = self.disable(entry, {"FORCE_HOME": "1"})
+                self.assertEqual(result.returncode, 0, self.output(result))
+                self.assertIn(f"pm disable-user --user 0 {STOCK}", sent)
+
+    # Review O1: two packages people usually want to keep get a one-line, non-blocking notice.
+    def test_ask_first_packages_get_a_notice_but_are_still_disabled(self):
+        self.write_list(["com.example.before", "com.google.android.katniss", "com.google.android.tv"])
+        for entry in self.entries():
+            with self.subTest(entry=entry):
+                self.tv(installed=["com.example.before", "com.google.android.katniss",
+                                   "com.google.android.tv", STOCK])
+                result, sent = self.disable(entry)
+                self.assertEqual(result.returncode, 0, self.output(result))
+                self.assertIn("pm disable-user --user 0 com.google.android.katniss", sent)
+                self.assertIn("pm disable-user --user 0 com.google.android.tv", sent)
+                out = self.output(result)
+                self.assertIn("Note: com.google.android.katniss", out)
+                self.assertIn("Note: com.google.android.tv ", out)
+
+    def test_no_notice_for_ordinary_lists(self):
+        self.tv()
+        result, _ = self.disable("sh")
+        self.assertNotIn("Note: com.google.android", self.output(result))
 
     def test_the_skipped_launcher_stays_in_the_recovery_record(self):
         self.tv()

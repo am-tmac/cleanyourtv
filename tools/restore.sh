@@ -17,7 +17,8 @@ PY=tools/venv/bin/python
 [ -x "$PY" ] || PY=tools/venv/Scripts/python.exe
 export MSYS_NO_PATHCONV=1
 # recovery.py reads and validates the list itself, prints the batch for tv.py and says on stderr what
-# it will leave alone. Without a record it warns and falls back to enabling the whole list. A refused
+# it will leave alone. Without a record it stops (naming records for the same list under another
+# TV_HOST) unless CLEANYOURTV_RESTORE_WITHOUT_RECORD=1 asks for the old enable-the-whole-list plan. A refused
 # plan never reaches the TV because recovery.py prints nothing until the whole plan is built, so
 # tv.py reads an empty batch; pipefail only makes this script exit non-zero afterwards.
 "$PY" -I tools/recovery.py --commands "$LIST" "$STOCK" | "$PY" -I tools/tv.py --batch

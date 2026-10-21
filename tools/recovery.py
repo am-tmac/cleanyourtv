@@ -37,8 +37,9 @@ VERSION = 1
 def read_list(path):
     """Package names from a debloat list, in file order.
 
-    A BOM and CRLF from a Windows editor are dropped, as is a trailing `# note`; anything that is not
-    a bare package name stops the run before the TV is touched.
+    A BOM and CRLF from a Windows editor are dropped, as is everything from the first `#` (a note,
+    with or without a space before it); anything that is not one bare package name per line stops
+    the run before the TV is touched. disable.sh and disable.ps1 read lines the same way.
     """
     text = Path(path).read_text(encoding="utf-8-sig", errors="replace")
     names = []
@@ -46,9 +47,15 @@ def read_list(path):
         line = line.split("#", 1)[0].strip()
         if not line:
             continue
-        name = line.split()[0]
-        if not PACKAGE_RE.fullmatch(name):
-            raise SystemExit(f"{path}:{number}: not a package name: {name!r}")
+        tokens = line.split()
+        for name in tokens:
+            if not PACKAGE_RE.fullmatch(name):
+                raise SystemExit(f"{path}:{number}: not a package name: {name!r}")
+        if len(tokens) > 1:
+            # Used to drop everything after the first name silently, so the second one was never
+            # disabled and never restored.
+            raise SystemExit(f"{path}:{number}: one package name per line, found {len(tokens)}: {line!r}")
+        name = tokens[0]
         names.append(name)
     if not names:
         raise SystemExit(f"{path}: no package names in this list")
@@ -61,6 +68,30 @@ def record_path(list_path, host):
     tag = re.sub(r"[^A-Za-z0-9.-]", "_", host or "no-host")
     digest = hashlib.sha1(str(Path(list_path).resolve()).encode()).hexdigest()[:8]
     return Path.home() / ".cleanyourtv" / f"recovery-{tag}-{digest}.json"
+
+
+def similar_records(list_path, host):
+    """Other records whose list has the same file name, or whose host is this one in another form
+    (a name instead of the IP, different case, a port): the usual reasons a record is not found."""
+    folder = Path.home() / ".cleanyourtv"
+    want = Path(list_path).name
+    norm = (host or "").strip().lower().split(":")[0]
+    own = record_path(list_path, host)
+    hits = []
+    for candidate in sorted(folder.glob("recovery-*.json")) if folder.is_dir() else []:
+        if candidate == own:
+            continue
+        try:
+            with open(candidate) as f:
+                data = json.load(f)
+        except (OSError, ValueError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        other_host = str(data.get("host") or "").strip().lower().split(":")[0]
+        if Path(str(data.get("list") or "")).name == want or (norm and other_host == norm):
+            hits.append(candidate)
+    return hits
 
 
 def load_record(path):
@@ -215,11 +246,21 @@ def restore_commands(list_path, stock, host):
     commands = []
 
     if not path.exists():
+        sys.stderr.write(f"no recovery record for this TV and list ({path}).\n")
+        for hint in similar_records(list_path, host):
+            sys.stderr.write(f"  a record for the same list name exists: {hint}\n"
+                             "  (taken with a different TV_HOST or from another copy of the list; run\n"
+                             "  restore with the same TV_HOST and list path as disable to use it)\n")
+        if os.environ.get("CLEANYOURTV_RESTORE_WITHOUT_RECORD") != "1":
+            raise SystemExit(
+                "Without a record, restore can only enable every listed package, including ones that\n"
+                "were already disabled before cleanup, and reset Home and the animation scales to their\n"
+                "defaults. Nothing was sent. To do that anyway, run again with\n"
+                "CLEANYOURTV_RESTORE_WITHOUT_RECORD=1.")
         sys.stderr.write(
-            f"no recovery record for this TV and list ({path}).\n"
-            "Enabling every listed package and resetting Home and the animation scales to their\n"
-            "defaults. Packages that were already disabled before cleanup will be enabled too:\n"
-            "check the list before running this.\n")
+            "CLEANYOURTV_RESTORE_WITHOUT_RECORD=1: enabling every listed package and resetting Home and\n"
+            "the animation scales to their defaults. Packages that were already disabled before cleanup\n"
+            "will be enabled too.\n")
         for name in packages:
             commands.append(f"pm enable {name}")
         if stock:
