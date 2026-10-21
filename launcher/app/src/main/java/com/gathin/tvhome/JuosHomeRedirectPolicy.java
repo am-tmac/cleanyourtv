@@ -5,15 +5,15 @@ package com.gathin.tvhome;
  *
  * A stock Home window seen shortly after our last redirect is a repeat Home press, not a loop:
  * {@link #decide} answers "check again in N ms" instead of dropping it, so stock Home is never
- * left in front. Only {@link #MAX_IN_BURST} real redirects inside {@link #BURST_MS} — a genuine
- * fight with the vendor launcher — trip the circuit breaker.
+ * left in front. Deferred re-checks are not attempts: the circuit breaker trips on the 4th real
+ * redirect inside {@link #BURST_MS} (more than {@link #MAX_IN_BURST}), as before.
  */
 final class JuosHomeRedirectPolicy {
     static final long NOW = 0;
     static final long NO = -1;
     static final long DEDUPE_MS = 600;
     static final long BURST_MS = 10000;
-    static final int MAX_IN_BURST = 8;
+    static final int MAX_IN_BURST = 3;
 
     private long lastAttempt = -1;
     private long burstStart;

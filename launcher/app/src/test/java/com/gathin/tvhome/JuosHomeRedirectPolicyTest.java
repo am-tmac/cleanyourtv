@@ -57,16 +57,30 @@ public class JuosHomeRedirectPolicyTest {
         assertEquals(NOW, d(p, 2 * gap));
         assertFalse(p.isTripped());
     }
-    /** Old policy tripped (and switched the redirect off) on the 4th Home within 10 s. */
-    @Test public void sixQuickPressesNeverTrip() {
+    /** Kept on purpose: the 4th real redirect inside 10 s switches the redirect off. */
+    @Test public void fourthRedirectWithinTenSecondsTrips() {
+        assertEquals(3, JuosHomeRedirectPolicy.MAX_IN_BURST);
+        assertEquals(10000, JuosHomeRedirectPolicy.BURST_MS);
         JuosHomeRedirectPolicy p = new JuosHomeRedirectPolicy();
         long t = 0;
-        for (int i = 0; i < 6; i++) {
+        for (int i = 0; i < 3; i++) {
             long r = d(p, t);
             if (r > 0) { t += r; r = d(p, t); }
             assertEquals(NOW, r);
             t += 350;
         }
+        assertFalse(p.isTripped());
+        long r = d(p, t);
+        if (r > 0) { t += r; r = d(p, t); }
+        assertEquals(NO, r);
+        assertTrue(p.isTripped());
+    }
+    @Test public void doubleAndTriplePressStillRedirectEveryTime() {
+        JuosHomeRedirectPolicy p = new JuosHomeRedirectPolicy();
+        assertEquals(NOW, d(p, 0));
+        long wait = d(p, 300);
+        assertTrue(wait > 0);
+        assertEquals(NOW, d(p, 300 + wait));
         assertFalse(p.isTripped());
     }
     @Test public void sustainedLoopTripsUntilNewPolicy() {
