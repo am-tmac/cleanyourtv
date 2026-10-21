@@ -58,6 +58,9 @@ Debloat
 - Run `pm` commands one per shell call, chained commands may silently stop after the first.
 - Disable in small batches and screenshot between them: a batch can take something load-bearing with
   it and you cannot tell which.
+- After the last batch, reboot once and compare `pm list packages -d` with what you disabled: some
+  firmware re-enables packages at every boot from its own list (TCL Android 9 does this for its user
+  center). Note those in the list header instead of disabling them again after each boot.
 - Offer me ad-blocking DNS as an optional extra: on Android 9 and newer, Private DNS set to an
   ad-blocking resolver (`settings put global private_dns_specifier dns.adguard-dns.com`, then
   `settings put global private_dns_mode hostname`). Tell me it doesn't block YouTube ads, check an app
@@ -74,13 +77,24 @@ Launcher
   Android TV launcher instead (Java, AndroidX RecyclerView, minSdk matching the TV, debug build is fine),
   install it over ADB, set it as the default home and disable the stock launcher. If several apps claim
   the HOME intent, list them with `cmd package query-activities -a android.intent.action.MAIN -c
-  android.intent.category.HOME` and set the default with `cmd package set-home-activity`.
+  android.intent.category.HOME` and set the default with `cmd package set-home-activity`. Those two
+  commands can both name your launcher while Home still opens something else: on some Google TV builds
+  `set-home-activity` prints `Success` and changes nothing, and setupwraith's `.RecoveryActivity`
+  keeps the key. Confirm with `dumpsys activity activities | grep mFocusedApp` before telling me the
+  takeover worked.
 - Before disabling the stock launcher, check which other apps claim HOME: on Google TV the setup wizard
   (`com.google.android.tungsten.setupwraith`) takes over even after the stock launcher is disabled, and
   the matching `examples/` header says what to do. Before disabling setupwraith, run
   `dumpsys wifi | grep -o 'cname=[^ ]*'`: a Wi-Fi network saved during first setup belongs to it, and
   Android deletes that network the moment it is disabled, which takes the TV off Wi-Fi and ADB. If it
   does, ask me to forget the network and re-join it in Settings first.
+- On Google TV the stock launcher also answers the remote's app buttons (Netflix, YouTube and the like),
+  Input and Settings/dashboard buttons, so after disabling it ask me to press each one, and remap any that
+  do nothing with the launcher's key services: `input_key_keycodes` and `app_keys` with
+  INPUT_KEY_SERVICE=1, `settings_key_keycodes` with HOME_KEY_SERVICE=1 (`config.xml` or the theme).
+  A button the TV logs as `KEY_UNKNOWN` or `KEY_PROGRAM` cannot be matched by keycode, since every
+  unmapped button shares it: read the scancode with `getevent -lt` and use `settings_key_scancodes`,
+  which only `config.xml` carries (a theme can set keycodes, not scancodes).
 - On Android 11 and newer the launcher must declare `<queries>` for `android.intent.category.LEANBACK_LAUNCHER`,
   or package visibility silently hides every app and the grid comes up empty; target a recent SDK, some
   Google TV 14 sets refuse older targets at install.
