@@ -43,13 +43,22 @@ fi
 export JAVA_HOME
 # Android Studio's default SDK location on macOS, then on Linux, then Homebrew's command-line tools.
 export ANDROID_HOME="${ANDROID_HOME:-$(for d in ~/Library/Android/sdk ~/Android/Sdk; do [ -d "$d" ] && echo "$d" && break; done)}"
-export ANDROID_HOME="${ANDROID_HOME:-/opt/homebrew/share/android-commandlinetools}"
+if [ -z "${ANDROID_HOME:-}" ] && [ -d /opt/homebrew/share/android-commandlinetools ]; then
+  export ANDROID_HOME=/opt/homebrew/share/android-commandlinetools
+fi
+if [ -z "${ANDROID_HOME:-}" ] || [ ! -d "$ANDROID_HOME" ]; then
+  echo "ERROR: no Android SDK found${ANDROID_HOME:+ at ANDROID_HOME=$ANDROID_HOME}. Install Android Studio or the" >&2
+  echo "command-line tools, then set ANDROID_HOME to the SDK folder and run this again." >&2
+  exit 1
+fi
 export PATH="$JAVA_HOME/bin:$PATH"
 # local.properties is a Java properties file, where a backslash is an escape. Git Bash on Windows hands us
 # C:\Users\...\Sdk, which Gradle then reads as a broken path ("The filename, directory name, or volume label
-# syntax is incorrect"), and since the file is only written when missing, build-and-install.ps1 kept failing
-# on it too. Forward slashes work everywhere.
-[ -f local.properties ] || echo "sdk.dir=$(printf '%s' "$ANDROID_HOME" | tr '\\' '/')" > local.properties
+# syntax is incorrect"). Forward slashes work everywhere. sdk.dir follows the SDK of this run: a file written
+# once kept pointing at an SDK that had since moved. Other lines in local.properties are kept as they are.
+{ [ -f local.properties ] && grep -v '^sdk\.dir=' local.properties || true
+  echo "sdk.dir=$(printf '%s' "$ANDROID_HOME" | tr '\\' '/')"; } > local.properties.tmp
+mv -f local.properties.tmp local.properties
 ./gradlew assembleRelease -q --console=plain
 # Which app owns Home differs by build (com.google.android.tvlauncher on Android TV,
 # com.google.android.apps.tv.launcherx on newer Google TV), so ask the TV instead of guessing.

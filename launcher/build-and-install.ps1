@@ -29,9 +29,13 @@ if (-not $env:JAVA_HOME -or -not (Test-Path "$env:JAVA_HOME\bin\java.exe")) {
     $env:JAVA_HOME = $jbr
 }
 $sdk = if ($env:ANDROID_HOME) { $env:ANDROID_HOME } else { "$env:LOCALAPPDATA\Android\Sdk" }
-if (-not (Test-Path local.properties)) {
-    "sdk.dir=$($sdk -replace '\\', '\\')" | Out-File -Encoding ascii local.properties
-}
+if (-not (Test-Path $sdk -PathType Container)) { throw "no Android SDK at '$sdk': install Android Studio or set ANDROID_HOME to the SDK folder" }
+# sdk.dir follows the SDK of this run (as in build-and-install.sh); other lines are kept. The -replace
+# doubles each backslash, which is how a .properties file spells one.
+$props = @()
+if (Test-Path local.properties) { $props = @(Get-Content local.properties | Where-Object { $_ -notmatch '^sdk\.dir=' }) }
+$props += "sdk.dir=$($sdk -replace '\\', '\\')"
+$props | Out-File -Encoding ascii local.properties
 
 .\gradlew.bat assembleRelease -q --console=plain
 if ($LASTEXITCODE -ne 0) { throw 'Gradle build failed' }
