@@ -33,9 +33,19 @@ final class WallpaperPlayer {
     private boolean closed;
     private boolean loading;
     private String displayed = "";
+    private final Context context;
+    private final int dim;
+    private boolean attached;
+    /** Glass dock: gets a blurred copy of each picture shown, made on the decoder thread. */
+    private GlassPainter glass;
+    private Runnable glassChanged;
+    private Bitmap shown;
+    private Runnable imageChanged;
 
     WallpaperPlayer(Context context, FrameLayout root, Config config) {
+        this.context = context;
         this.root = root;
+        dim = config.wallpaperDim;
         files = new ArrayList<>(config.wallpapers);
         interval = config.wallpaperRotationMinutes * 60_000L;
         preferences = context.getSharedPreferences("wallpaper_rotation", Context.MODE_PRIVATE);
@@ -46,18 +56,84 @@ final class WallpaperPlayer {
         image.setScaleType(ImageView.ScaleType.CENTER_CROP);
         image.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
         if (config.wallpaperEnabled && !files.isEmpty()) {
-            root.addView(image, 0, new FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-            // No shade layer at all when the theme doesn't dim: a full-screen view is overdraw on 1 GB TVs.
-            if (config.wallpaperDim > 0) {
-                View shade = new View(context);
-                shade.setBackgroundColor((config.wallpaperDim * 255 / 100) << 24);
-                shade.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
-                root.addView(shade, 1, new FrameLayout.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-            }
+            attach();
             showFirst();
         }
+    }
+
+    private void attach() {
+        if (attached) return;
+        attached = true;
+        root.addView(image, 0, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        // No shade layer at all when the theme doesn't dim: a full-screen view is overdraw on 1 GB TVs.
+        if (dim > 0) {
+            View shade = new View(context);
+            shade.setBackgroundColor((dim * 255 / 100) << 24);
+            shade.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+            root.addView(shade, 1, new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        }
+    }
+
+    /** Whether a picture is on screen (for the glass and the text shadow). */
+    boolean showing() {
+        return shown != null;
+    }
+
+    /** Reports actual image display, including the first asynchronous Bing download. Main thread. */
+    void setImageChangedListener(Runnable changed) {
+        imageChanged = changed;
+        changed.run();
+    }
+
+    /**
+     * Glass dock on: every picture shown from now on (and the current one) also gets a blurred copy for
+     * {@code painter}; {@code changed} runs on the main thread when it is ready.
+     */
+    void setGlass(GlassPainter painter, Runnable changed) {
+        glass = painter;
+        glassChanged = changed;
+        if (shown != null) makeBackdrop(shown);
+    }
+
+    private void makeBackdrop(Bitmap bitmap) {
+        if (glass == null || closed) return;
+        GlassPainter painter = glass;
+        decoder.execute(() -> {
+            Bitmap blurred = GlassPainter.makeBackdrop(bitmap, width, height);
+            root.post(() -> {
+                if (closed || bitmap != shown) return;
+                painter.setBackdrop(blurred, width, height);
+                if (glassChanged != null) glassChanged.run();
+            });
+        });
+    }
+
+    private void display(Bitmap bitmap) {
+        image.setImageBitmap(bitmap);
+        shown = bitmap;
+        if (imageChanged != null) imageChanged.run();
+        makeBackdrop(bitmap);
+    }
+
+    /** Shows a newly downloaded picture (Bing) in place of the current one; decoded in the background. */
+    void replace(File file) {
+        if (closed || file == null || (file.getName().equals(displayed) && shown != null)) return;
+        files.clear();
+        files.add(file);
+        attach();
+        preferences.edit().putString("image", file.getName()).putLong("changed", System.currentTimeMillis()).apply();
+        loading = true;   // keeps update() from decoding the same file a second time
+        decoder.execute(() -> {
+            Bitmap bitmap = decode(file);
+            root.post(() -> {
+                loading = false;
+                if (closed || bitmap == null) return;
+                display(bitmap);
+                displayed = file.getName();
+            });
+        });
     }
 
     /**
@@ -72,7 +148,7 @@ final class WallpaperPlayer {
         while (first != null) {
             Bitmap bitmap = decode(first);
             if (bitmap != null) {
-                image.setImageBitmap(bitmap);
+                display(bitmap);
                 displayed = first.getName();
                 if (!displayed.equals(previous)) {
                     preferences.edit().putString("image", displayed)
@@ -125,7 +201,7 @@ final class WallpaperPlayer {
                     update();
                     return;
                 }
-                image.setImageBitmap(bitmap);
+                display(bitmap);
                 displayed = next.getName();
                 if (!displayed.equals(previous) || changed == 0) {
                     preferences.edit().putString("image", displayed)

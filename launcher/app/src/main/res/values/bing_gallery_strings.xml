@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="wallpaper_bing_choose">Choose a Bing picture…</string>
+    <string name="bing_gallery_hint">Recent pictures: %1$d · Source %2$s · D-pad to browse · OK to select · Back to close</string>
+    <string name="bing_gallery_loading">Loading Bing pictures…</string>
+    <string name="bing_gallery_error">Could not load Bing pictures (Bing and the backup source are both unresponsive). Please try again later.</string>
+    <string name="bing_gallery_retry">Retry</string>
+    <string name="bing_gallery_applying">Applying wallpaper…</string>
+    <string name="bing_gallery_selected">Selected</string>
+</resources>

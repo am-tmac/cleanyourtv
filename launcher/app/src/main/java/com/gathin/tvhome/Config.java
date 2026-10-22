@@ -104,6 +104,12 @@ final class Config {
     final List<RaceWeekend.Race> raceCalendar;
     /** Cinematic top shelf (config.xml, cinematic_home): the focused dock app's artwork behind a larger shelf. */
     final boolean cinematicHome;
+    /** On-TV choice (launcher settings): Bing's daily image is the wallpaper. */
+    final boolean bingWallpaper;
+    /** On-TV choice: dark smoked glass dock and top buttons; off by default. */
+    final boolean glassDock;
+    /** On-TV choice: the weather line next to the clock; off by default. */
+    final boolean weatherLine;
 
     private Config(List<String> dockApps, boolean fillDock, List<String> hiddenApps, String liveTvPackage,
                    String liveTvAction, Map<String, String> launchActions, Map<String, String> appLabels,
@@ -114,7 +120,11 @@ final class Config {
                    int[] settingsKeycodes, boolean settingsKeyPanel, boolean wallpaperEnabled, File wallpaper, List<File> wallpapers,
                    int wallpaperRotationMinutes, int wallpaperDim, boolean overlayApplied,
                    Festival festival, int[] inputKeycodes, List<String> appKeys,
-                   List<RaceWeekend.Race> raceCalendar, boolean cinematicHome) {
+                   List<RaceWeekend.Race> raceCalendar, boolean cinematicHome,
+                   boolean bingWallpaper, boolean glassDock, boolean weatherLine) {
+        this.bingWallpaper = bingWallpaper;
+        this.glassDock = glassDock;
+        this.weatherLine = weatherLine;
         this.inputKeycodes = inputKeycodes;
         this.appKeys = Collections.unmodifiableList(appKeys);
         this.dockApps = Collections.unmodifiableList(dockApps);
@@ -264,7 +274,16 @@ final class Config {
         // An on-TV wallpaper pick overrides the theme: a filename from the wallpapers/
         // collection, or "none". Unset means the theme decides (off by default).
         String wallpaperChoice = choices.getString(WALLPAPER_CHOICE_KEY, null);
-        if ("none".equals(wallpaperChoice)) {
+        boolean bing = AppearanceSettings.WALLPAPER_BING.equals(wallpaperChoice);
+        if (bing) {
+            // Bing's newest download, or none yet: Home fetches it and shows it when it arrives.
+            File latest = dir == null ? null : BingWallpaper.current(new File(dir, "bing"));
+            wallpapers.clear();
+            if (latest != null) wallpapers.add(latest);
+            wallpaper = latest;
+            wallpaperEnabled = dir != null;
+            rotationMinutes = 0;
+        } else if ("none".equals(wallpaperChoice)) {
             wallpapers.clear();
             wallpaper = null;
             wallpaperEnabled = false;
@@ -280,6 +299,10 @@ final class Config {
                 wallpaperEnabled = true;
             }
         }
+        wallpaperDim = AppearanceSettings.dim(wallpaperDim,
+                choices.getInt(AppearanceSettings.DIM_KEY, AppearanceSettings.DIM_DEFAULT), bing);
+        boolean glassDock = choices.getBoolean(AppearanceSettings.GLASS_DOCK_KEY, AppearanceSettings.GLASS_DOCK_DEFAULT);
+        boolean weatherLine = choices.getBoolean(AppearanceSettings.WEATHER_KEY, AppearanceSettings.WEATHER_DEFAULT);
         // A festive skin comes only from a theme; config.xml has no festival.
         Festival festival = json == null ? Festival.NONE : Festival.parse(string(json, "festival", ""),
                 string(json, "festival_until", ""), string(json, "greeting", ""), string(json, "accent_color", ""));
@@ -291,7 +314,8 @@ final class Config {
                 shamsi, greetingName, moduleCards, reducedMotion, dockTitle, dockRow, reorderButton, vpn, homeSettings, showStats, library, background,
                 Math.max(0, Math.min(100, skyIntensity)), settingsKeycodes, settingsKeyPanel, wallpaperEnabled, wallpaper,
                 wallpapers, rotationMinutes, wallpaperDim, applied,
-                festival, inputKeycodes, appKeys, json == null ? Collections.emptyList() : raceCalendar(json), cinematic);
+                festival, inputKeycodes, appKeys, json == null ? Collections.emptyList() : raceCalendar(json), cinematic,
+                bing, glassDock, weatherLine);
     }
 
     /**
@@ -334,11 +358,12 @@ final class Config {
             // explicit theme push or reset by the updated tools.
             SharedPreferences.Editor editor = choices.edit();
             if (!"absent".equals(token)) editor.remove("columns").remove("animations")
-                    .remove("advanced_effects").remove(ROWS_BELOW_DOCK_KEY).remove(WALLPAPER_CHOICE_KEY);
+                    .remove("advanced_effects").remove(ROWS_BELOW_DOCK_KEY).remove(WALLPAPER_CHOICE_KEY)
+                    .remove(AppearanceSettings.DIM_KEY);
             editor.putString(THEME_SIGNATURE_KEY, signature).commit();
         } else if (!seen.equals(signature)) {
             choices.edit().remove("columns").remove("animations").remove("advanced_effects")
-                    .remove(ROWS_BELOW_DOCK_KEY).remove(WALLPAPER_CHOICE_KEY)
+                    .remove(ROWS_BELOW_DOCK_KEY).remove(WALLPAPER_CHOICE_KEY).remove(AppearanceSettings.DIM_KEY)
                     .putString(THEME_SIGNATURE_KEY, signature).commit();
         }
     }

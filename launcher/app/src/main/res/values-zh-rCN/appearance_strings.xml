@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="wallpaper_bing">必应每日壁纸</string>
+    <string name="wallpaper_hint">必应每日壁纸每天联网下载一次当日必应图片。自己的图片复制到 Android/data/com.gathin.tvhome/files/wallpapers/ 后会出现在列表中。</string>
+    <string name="wallpaper_dim_state">壁纸压暗：%1$s</string>
+    <string name="glass_dock">玻璃程序坞</string>
+    <string name="glass_dock_hint">程序坞和顶部按钮使用浅色玻璃，透出模糊的壁纸（Android 12 及以上；更低版本为半透明底色）。</string>
+    <string name="weather_line">天气</string>
+    <string name="weather_line_hint">在时钟旁显示城市、天气和气温。城市按网络 IP 定位（ipwho.is、ip-api.com 或 ipinfo.io），天气来自 Open-Meteo；桌面显示时最多每 30 分钟查询一次。需要联网。</string>
+</resources>

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="wallpaper_bing_choose">选择必应壁纸…</string>
+    <string name="bing_gallery_hint">最近 %1$d 张 · 来源 %2$s · 方向键浏览 · 确定键选择 · 返回键关闭</string>
+    <string name="bing_gallery_loading">正在加载必应壁纸…</string>
+    <string name="bing_gallery_error">无法加载必应壁纸（必应和备用源都无响应），请稍后重试。</string>
+    <string name="bing_gallery_retry">重试</string>
+    <string name="bing_gallery_applying">正在更换壁纸…</string>
+    <string name="bing_gallery_selected">已选择</string>
+    <string name="wallpaper_applied">壁纸已更换</string>
+</resources>

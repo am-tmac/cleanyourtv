@@ -16,10 +16,14 @@ import java.util.List;
 
 /** Remote-friendly settings owned by the launcher; system settings stay one row away. */
 public final class LauncherSettingsActivity extends Activity {
+    private static final int BING_GALLERY_REQUEST = 301;
     private SharedPreferences choices;
     private final TextView[] columnChoices = new TextView[4];
     private final TextView[] rowChoices = new TextView[4];
     private TextView wallpaperChoice;
+    private TextView wallpaperDimChoice;
+    private PillSwitchView glassDockSwitch;
+    private PillSwitchView weatherSwitch;
     private TextView animationsChoice;
     private TextView advancedChoice;
     private TextView followThemeChoice;
@@ -71,6 +75,29 @@ public final class LauncherSettingsActivity extends Activity {
         }
         wallpaperChoice = findViewById(R.id.wallpaperChoice);
         wallpaperChoice.setOnClickListener(v -> showWallpaperPicker());
+        wallpaperDimChoice = findViewById(R.id.wallpaperDimChoice);
+        wallpaperDimChoice.setOnClickListener(v -> {
+            int next = AppearanceSettings.nextDim(
+                    choices.getInt(AppearanceSettings.DIM_KEY, AppearanceSettings.DIM_DEFAULT));
+            if (next < 0) choices.edit().remove(AppearanceSettings.DIM_KEY).apply();
+            else choices.edit().putInt(AppearanceSettings.DIM_KEY, next).apply();
+            setResult(RESULT_OK);
+            refresh();
+        });
+        glassDockSwitch = findViewById(R.id.glassDockSwitch);
+        findViewById(R.id.glassDockChoice).setOnClickListener(v -> {
+            boolean on = !choices.getBoolean(AppearanceSettings.GLASS_DOCK_KEY, AppearanceSettings.GLASS_DOCK_DEFAULT);
+            choices.edit().putBoolean(AppearanceSettings.GLASS_DOCK_KEY, on).apply();
+            glassDockSwitch.setChecked(on, true);
+            setResult(RESULT_OK);
+        });
+        weatherSwitch = findViewById(R.id.weatherSwitch);
+        findViewById(R.id.weatherChoice).setOnClickListener(v -> {
+            boolean on = !choices.getBoolean(AppearanceSettings.WEATHER_KEY, AppearanceSettings.WEATHER_DEFAULT);
+            choices.edit().putBoolean(AppearanceSettings.WEATHER_KEY, on).apply();
+            weatherSwitch.setChecked(on, true);
+            setResult(RESULT_OK);
+        });
         animationsChoice = findViewById(R.id.animationsChoice);
         animationsChoice.setOnClickListener(v -> {
             animations = !animations;
@@ -97,7 +124,8 @@ public final class LauncherSettingsActivity extends Activity {
         followThemeChoice.setOnClickListener(v -> {
             if (!hasOnTvChoices()) return;
             choices.edit().remove("columns").remove(Config.ROWS_BELOW_DOCK_KEY).remove("animations")
-                    .remove("advanced_effects").remove(Config.WALLPAPER_CHOICE_KEY).commit();
+                    .remove("advanced_effects").remove(Config.WALLPAPER_CHOICE_KEY)
+                    .remove(AppearanceSettings.DIM_KEY).commit();
             Config current = Config.load(this);
             columns = current.columns;
             rowsBelowDock = current.rowsBelowDock;
@@ -145,24 +173,34 @@ public final class LauncherSettingsActivity extends Activity {
         File dir = Config.dir(this);
         List<File> images = new java.util.ArrayList<>(WallpaperRotation.images(
                 dir == null ? null : new File(dir, "wallpapers")));
+        images.removeIf(file -> WallpaperCollection.resolve(file.getParentFile(), file.getName()) == null);
         // A theme with a single wallpaper.jpg offers that picture too (Config maps the choice back to it).
         File single = dir == null ? null : new File(dir, Config.WALLPAPER_NAME);
         if (single != null && single.isFile()) images.add(0, single);
-        String[] labels = new String[images.size() + 1];
-        for (int i = 0; i < images.size(); i++) labels[i] = images.get(i).getName();
-        labels[images.size()] = getString(R.string.wallpaper_none);
+        // Rows: daily Bing, on-demand Bing gallery, collection pictures, None.
+        String[] labels = new String[images.size() + 3];
+        labels[0] = getString(R.string.wallpaper_bing);
+        labels[1] = getString(R.string.wallpaper_bing_choose);
+        for (int i = 0; i < images.size(); i++) labels[i + 2] = wallpaperName(images.get(i).getName());
+        labels[images.size() + 2] = getString(R.string.wallpaper_none);
         String current = choices.getString(Config.WALLPAPER_CHOICE_KEY, null);
-        int checked = "none".equals(current) ? images.size()
-                : indexOf(images, current);
+        int found = indexOf(images, current);
+        int checked = "none".equals(current) ? images.size() + 2
+                : AppearanceSettings.WALLPAPER_BING.equals(current) ? 0 : found < 0 ? -1 : found + 2;
         new AlertDialog.Builder(this)
                 .setTitle(R.string.wallpaper_label)
                 .setSingleChoiceItems(labels, checked, (dialog, which) -> {
                     dialog.dismiss();
-                    if (which == images.size()) {
+                    if (which == images.size() + 2) {
                         choices.edit().putString(Config.WALLPAPER_CHOICE_KEY, "none").apply();
+                    } else if (which == 0) {
+                        choices.edit().putString(Config.WALLPAPER_CHOICE_KEY, AppearanceSettings.WALLPAPER_BING).apply();
+                    } else if (which == 1) {
+                        startActivityForResult(new Intent(this, BingGalleryActivity.class), BING_GALLERY_REQUEST);
+                        return;
                     } else {
                         choices.edit().putString(Config.WALLPAPER_CHOICE_KEY,
-                                images.get(which).getName()).apply();
+                                images.get(which - 2).getName()).apply();
                     }
                     setResult(RESULT_OK);
                     Toast.makeText(this, R.string.wallpaper_applied, Toast.LENGTH_SHORT).show();
@@ -173,8 +211,32 @@ public final class LauncherSettingsActivity extends Activity {
                     setResult(RESULT_OK);
                     refresh();
                 })
+                .setPositiveButton(R.string.wallpaper_manage, (dialog, which) ->
+                        new WallpaperManagementDialog(this, choices, () -> {
+                            setResult(RESULT_OK);
+                            refresh();
+                        }, () -> {
+                            refresh();
+                            showWallpaperPicker();
+                        }).show())
                 .setNegativeButton(android.R.string.cancel, null)
                 .show();
+    }
+
+    private String wallpaperName(String name) {
+        File base = Config.dir(this);
+        File directory = base == null ? null : new File(base, "wallpapers");
+        boolean chinese = "zh".equals(getResources().getConfiguration().getLocales().get(0).getLanguage());
+        return WallpaperCollection.displayName(name, WallpaperCollection.title(directory, name), chinese);
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == BING_GALLERY_REQUEST && resultCode == RESULT_OK) {
+            setResult(RESULT_OK);
+            refresh();
+        }
     }
 
     private static int indexOf(List<File> images, String name) {
@@ -222,15 +284,23 @@ public final class LauncherSettingsActivity extends Activity {
         String wallpaperCurrent = choices.getString(Config.WALLPAPER_CHOICE_KEY, null);
         wallpaperChoice.setText(getString(R.string.wallpaper_state,
                 "none".equals(wallpaperCurrent) ? getString(R.string.wallpaper_none)
-                        : wallpaperCurrent != null ? wallpaperCurrent
+                        : AppearanceSettings.WALLPAPER_BING.equals(wallpaperCurrent) ? getString(R.string.wallpaper_bing)
+                        : wallpaperCurrent != null ? wallpaperName(wallpaperCurrent)
                         : getString(R.string.wallpaper_theme_default)));
         followThemeChoice.setSelected(!hasOnTvChoices());
+        int dim = choices.getInt(AppearanceSettings.DIM_KEY, AppearanceSettings.DIM_DEFAULT);
+        wallpaperDimChoice.setText(getString(R.string.wallpaper_dim_state,
+                dim < 0 ? getString(R.string.wallpaper_theme_default) : dim + "%"));
+        glassDockSwitch.setChecked(choices.getBoolean(AppearanceSettings.GLASS_DOCK_KEY,
+                AppearanceSettings.GLASS_DOCK_DEFAULT), false);
+        weatherSwitch.setChecked(choices.getBoolean(AppearanceSettings.WEATHER_KEY,
+                AppearanceSettings.WEATHER_DEFAULT), false);
     }
 
     private boolean hasOnTvChoices() {
         return choices.contains("columns") || choices.contains(Config.ROWS_BELOW_DOCK_KEY)
                 || choices.contains("animations") || choices.contains("advanced_effects")
-                || choices.contains(Config.WALLPAPER_CHOICE_KEY);
+                || choices.contains(Config.WALLPAPER_CHOICE_KEY) || choices.contains(AppearanceSettings.DIM_KEY);
     }
 
     private void open(Intent intent) {

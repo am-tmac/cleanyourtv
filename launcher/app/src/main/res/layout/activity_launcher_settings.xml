@@ -67,6 +67,98 @@
             android:layout_marginTop="28dp" />
 
         <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="7dp"
+            android:text="@string/wallpaper_hint"
+            android:textColor="#FFACB8C1"
+            android:textSize="14sp" />
+
+        <TextView
+            android:id="@+id/wallpaperDimChoice"
+            style="@style/SettingsRow"
+            android:layout_marginTop="10dp" />
+
+        <LinearLayout
+            android:id="@+id/glassDockChoice"
+            android:layout_width="match_parent"
+            android:layout_height="52dp"
+            android:layout_marginTop="10dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:paddingStart="18dp"
+            android:paddingEnd="18dp"
+            android:background="@drawable/switch_row_bg"
+            android:focusable="true"
+            android:clickable="true">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginEnd="12dp"
+                android:text="@string/glass_dock"
+                android:textColor="#FFFFFFFF"
+                android:textSize="18sp"
+                android:singleLine="true"
+                android:ellipsize="end" />
+
+            <com.gathin.tvhome.PillSwitchView
+                android:id="@+id/glassDockSwitch"
+                android:layout_width="52dp"
+                android:layout_height="31dp"
+                android:focusable="false"
+                android:clickable="false"
+                android:importantForAccessibility="no" />
+        </LinearLayout>
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="7dp"
+            android:text="@string/glass_dock_hint"
+            android:textColor="#FFACB8C1"
+            android:textSize="14sp" />
+        <LinearLayout
+            android:id="@+id/weatherChoice"
+            android:layout_width="match_parent"
+            android:layout_height="52dp"
+            android:layout_marginTop="10dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:paddingStart="18dp"
+            android:paddingEnd="18dp"
+            android:background="@drawable/switch_row_bg"
+            android:focusable="true"
+            android:clickable="true">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginEnd="12dp"
+                android:text="@string/weather_line"
+                android:textColor="#FFFFFFFF"
+                android:textSize="18sp"
+                android:singleLine="true"
+                android:ellipsize="end" />
+
+            <com.gathin.tvhome.PillSwitchView
+                android:id="@+id/weatherSwitch"
+                android:layout_width="52dp"
+                android:layout_height="31dp"
+                android:focusable="false"
+                android:clickable="false"
+                android:importantForAccessibility="no" />
+        </LinearLayout>
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="7dp"
+            android:text="@string/weather_line_hint"
+            android:textColor="#FFACB8C1"
+            android:textSize="14sp" />
+
+        <TextView
             android:id="@+id/animationsChoice"
             style="@style/SettingsRow"
             android:layout_marginTop="28dp" />

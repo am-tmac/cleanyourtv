@@ -239,6 +239,25 @@
                         android:layout_marginBottom="9dp"
                         android:orientation="vertical">
 
+                        <!-- Weather line (launcher settings, Weather; off by default): icon, "City · 晴 26°". Above the
+                             date so the date keeps its place next to the divider; gone when there is no reading. -->
+                        <TextView
+                            android:id="@+id/weather"
+                            android:gravity="left|center_vertical"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginBottom="5dp"
+                            android:singleLine="true"
+                            android:ellipsize="end"
+                            android:drawablePadding="7dp"
+                            android:textColor="#EBFFFFFF"
+                            android:textSize="15sp"
+                            android:fontFamily="@font/outfit_regular"
+                            android:letterSpacing="0.04"
+                            android:includeFontPadding="false"
+                            android:importantForAccessibility="yes"
+                            android:visibility="gone" />
+
                         <!-- Shamsi date ("27 Mehr 1405"), shown when shamsi_date is on. -->
                         <TextView
                             android:id="@+id/shamsiDate"

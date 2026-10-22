@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="wallpaper_bing">Bing 每日桌布</string>
+    <string name="wallpaper_hint">Bing 每日桌布每天連網下載一次當日 Bing 圖片。自己的圖片複製到 Android/data/com.gathin.tvhome/files/wallpapers/ 後會出現在清單中。</string>
+    <string name="wallpaper_dim_state">桌布調暗：%1$s</string>
+    <string name="glass_dock">玻璃程式塢</string>
+    <string name="glass_dock_hint">程式塢與頂部按鈕使用淺色玻璃，透出模糊的桌布（Android 12 以上；較舊版本為半透明底色）。</string>
+    <string name="weather_line">天氣</string>
+    <string name="weather_line_hint">在時鐘旁顯示城市、天氣與氣溫。城市依網路 IP 定位（ipwho.is、ip-api.com 或 ipinfo.io），天氣來自 Open-Meteo；主畫面顯示時最多每 30 分鐘查詢一次。需要連網。</string>
+</resources>

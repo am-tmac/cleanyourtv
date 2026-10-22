@@ -219,6 +219,12 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     private RecyclerView.OnScrollListener pendingFocusScroll;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
+    /** Weather line and Bing wallpaper downloads; created only when one of them is switched on. */
+    private java.util.concurrent.ExecutorService netExecutor;
+    private boolean weatherLine;
+    private boolean bingWallpaper;
+    private TextView weatherView;
+    private WeatherIconDrawable weatherIcon;
     /** Refreshes the network pill when the connection changes: at boot Wi-Fi often connects after Home is shown. */
     private final ConnectivityManager.NetworkCallback networkCallback = new ConnectivityManager.NetworkCallback() {
         @Override
@@ -282,6 +288,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             updateWifiLabel();
             sky.update();
             wallpaperPlayer.update();
+            refreshOnlineExtras();
             handler.postDelayed(this, MINUTE_MS);
         }
     };
@@ -316,6 +323,11 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         // the theme's background, so launch looks the same.
         getWindow().setBackgroundDrawable(null);
         wallpaperPlayer = new WallpaperPlayer(this, root, cfg);
+        weatherLine = cfg.weatherLine;
+        bingWallpaper = cfg.bingWallpaper;
+        if (weatherLine || bingWallpaper) netExecutor = java.util.concurrent.Executors.newSingleThreadExecutor();
+        // Glass dock: wallpaper backdrop on Android 12+; animated synthetic backdrop on Android 13+.
+        GlassPainter glassPainter = cfg.glassDock ? new GlassPainter(density) : null;
         sky = findViewById(R.id.sky);
         sky.setIntensity(cfg.skyIntensity);
         glass = findViewById(R.id.glass);
@@ -417,7 +429,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             public void onChildViewDetachedFromWindow(@NonNull View v) {
             }
         });
-        if (dockRow) grid.addItemDecoration(new DockDecoration(COLUMNS, density, cinematic));
+        if (dockRow) grid.addItemDecoration(new DockDecoration(COLUMNS, density, cinematic, glassPainter));
         if (animations) {
             int enterAnim = reducedMotion ? R.anim.tile_enter_reduced : R.anim.tile_enter;
             float enterDelay = reducedMotion ? 0f : 0.06f;
@@ -540,6 +552,33 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             }
         }
         if (festive) applyFestiveSkin((TextView) btnInputs, (TextView) btnSettings);
+        View[] pills = {btnInputs, btnWifi, btnReorder, btnSettings};
+        if (glassPainter != null) {
+            glassPainter.setSyntheticBackdrop(cfg.backgroundColor,
+                    new AmbientGlow(cinematic, getResources().getBoolean(R.bool.rtl_menu_bar)),
+                    getResources().getDisplayMetrics().widthPixels, getResources().getDisplayMetrics().heightPixels);
+            root.getViewTreeObserver().addOnPreDrawListener(() -> {
+                if (glassPainter.updateSynthetic(ambientColor, ambient.getVisibility() == View.VISIBLE ? ambient.getAlpha() : 0f)) {
+                    grid.invalidate();
+                    for (View pill : pills) pill.invalidate();
+                }
+                return true;
+            });
+            for (View pill : pills) {
+                pill.setBackground(new GlassPillDrawable(pill, glassPainter, getDrawable(R.drawable.pill_bg)));
+                if (pill instanceof TextView) {
+                    ((TextView) pill).setShadowLayer(6 * density, 0, 0.5f * density, 0x73000000);
+                }
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                wallpaperPlayer.setGlass(glassPainter, () -> {
+                    grid.invalidate();
+                    for (View pill : pills) pill.invalidate();
+                });
+            }
+        }
+        setUpWeatherLine(cfg);
+        wallpaperPlayer.setImageChangedListener(this::updateAmbientVisibility);
 
         // Hide the glass when focus leaves the tiles.
         getWindow().getDecorView().getViewTreeObserver().addOnGlobalFocusChangeListener((oldF, newF) -> {
@@ -624,6 +663,9 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         if (showStats) startStats();
         sky.update();
         wallpaperPlayer.start();
+        updateAmbientVisibility();
+        updateWeather();
+        refreshOnlineExtras();
         handler.postDelayed(minuteTick, MINUTE_MS);
         if (festive && diya != null) {
             diya.start();
@@ -762,6 +804,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     protected void onDestroy() {
         super.onDestroy();
         wallpaperPlayer.close();
+        if (netExecutor != null) netExecutor.shutdownNow();
         ConnectivityManager cm = getSystemService(ConnectivityManager.class);
         TvInputManager tim = (TvInputManager) getSystemService(TV_INPUT_SERVICE);
         if (tim != null) tim.unregisterCallback(inputCallback);
@@ -1203,7 +1246,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
 
     private void showHero(int position, float dockTopInRoot) {
         String label = adapter.labelAt(position);
-        int color = adapter.ambientColorAt(position);
+        boolean allowAmbient = ambientAllowed();
+        int color = allowAmbient ? adapter.ambientColorAt(position) : 0;
         float y = dockTopInRoot - 14 * density - 26 * density - hero.getHeight();
         boolean changed = !label.contentEquals(heroName.getText());
         if (cinematic) showHeroArt(position);
@@ -1217,15 +1261,16 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             hero.setY(y);
             hero.setTranslationX(0f);
             hero.setAlpha(1f);
-            setAmbient(color);
-            if (!animations) {
-                ambient.setAlpha(1f);
-                heroShown = true;
-            } else if (!heroShown) {
-                ambient.setAlpha(0f);
-                ambient.animate().alpha(1f).setDuration(160).start();
-                heroShown = true;
+            if (allowAmbient) {
+                setAmbient(color);
+                if (!animations) {
+                    ambient.setAlpha(1f);
+                } else if (!heroShown) {
+                    ambient.setAlpha(0f);
+                    ambient.animate().alpha(1f).setDuration(160).start();
+                }
             }
+            heroShown = true;
             return;
         }
 
@@ -1237,8 +1282,10 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             hero.setY(y);
             hero.setTranslationX(0f);
             hero.animate().alpha(1f).setDuration(260).start();
-            setAmbient(color);
-            ambient.animate().alpha(1f).setDuration(600).start();
+            if (allowAmbient) {
+                setAmbient(color);
+                ambient.animate().alpha(1f).setDuration(600).start();
+            }
             heroShown = true;
         } else if (changed) {
             if (advancedEffects) hero.animate().cancel();
@@ -1248,10 +1295,11 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
                 hero.setTranslationX(12 * density);
                 hero.animate().alpha(1f).translationX(0f).setDuration(200).start();
             }).start();
-            if (advancedEffects) {
+            if (allowAmbient && advancedEffects) {
                 transitionAmbient(color);
-            } else if (color != ambientColor) {
+            } else if (allowAmbient && color != ambientColor) {
                 ambient.animate().alpha(0.35f).setDuration(200).withEndAction(() -> {
+                    if (!ambientAllowed()) return;
                     setAmbient(color);
                     ambient.animate().alpha(1f).setDuration(500).start();
                 }).start();
@@ -1384,6 +1432,22 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         }
     }
 
+    private boolean ambientAllowed() {
+        return AmbientPolicy.allowed(wallpaperPlayer.showing());
+    }
+
+    /** Called on image display, not just on selection: Bing may arrive while focus stays still. */
+    private void updateAmbientVisibility() {
+        if (ambientAllowed()) {
+            ambient.setVisibility(View.VISIBLE);
+            return;
+        }
+        stopAmbientAnimation();
+        ambient.animate().withEndAction(null).cancel();
+        ambient.setAlpha(0f);
+        ambient.setVisibility(View.GONE);
+    }
+
     /**
      * The glow used to be a full-screen radial GradientDrawable. On Android 10 that drawable is
      * drawn on the CPU, so fading it for half a second redrew 1920×1080 every frame and the
@@ -1392,6 +1456,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
      * so changing apps neither repaints it on the CPU (about 11 ms) nor uploads it again.
      */
     private void setAmbient(int color) {
+        if (!ambientAllowed()) return;
         if (color == ambientColor && ambient.getBackground() != null) return;
         ambientColor = color;
         BitmapDrawable glow = (BitmapDrawable) ambient.getBackground();
@@ -1401,22 +1466,11 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             Bitmap bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
             Canvas canvas = new Canvas(bmp);
             Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
-            if (cinematic) {
-                // Higher and stronger, from the corner away from the shelf's text: the app's colour floods
-                // the top of the screen over its artwork, and the scrim keeps the text side dark.
-                boolean rtl = getResources().getBoolean(R.bool.rtl_menu_bar);
-                paint.setShader(new RadialGradient(
-                        w * (rtl ? 0.20f : 0.80f), h * 0.06f, w * 0.78f,
-                        new int[]{0xA6FFFFFF, 0x47FFFFFF, 0x00FFFFFF},
-                        new float[]{0f, 0.5f, 1f},
-                        Shader.TileMode.CLAMP));
-            } else {
-                paint.setShader(new RadialGradient(
-                        w * 0.32f, h * 0.42f, w * 0.62f,
-                        new int[]{0x5CFFFFFF, 0x26FFFFFF, 0x00FFFFFF},
-                        new float[]{0f, 0.45f, 1f},
-                        Shader.TileMode.CLAMP));
-            }
+            AmbientGlow geometry = new AmbientGlow(cinematic, getResources().getBoolean(R.bool.rtl_menu_bar));
+            paint.setShader(new RadialGradient(w * geometry.centerX, h * geometry.centerY, w * geometry.radius,
+                    new int[]{(geometry.innerAlpha << 24) | 0xFFFFFF,
+                            (geometry.middleAlpha << 24) | 0xFFFFFF, 0x00FFFFFF},
+                    new float[]{0f, geometry.middle, 1f}, Shader.TileMode.CLAMP));
             canvas.drawRect(0, 0, w, h, paint);
             glow = new BitmapDrawable(getResources(), bmp);
             glow.setGravity(Gravity.FILL);
@@ -1427,6 +1481,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     }
 
     private void transitionAmbient(int color) {
+        if (!ambientAllowed()) return;
         // A rapid focus change continues from the colour actually displayed on screen.
         stopAmbientAnimation();
         ambient.animate().cancel();
@@ -1453,7 +1508,6 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
      * name above the dock does not show (every grid tile has its name underneath).
      */
     private void showGlowOnly(int position) {
-        int color = adapter.ambientColorAt(position);
         stopAmbientAnimation();
         hero.animate().cancel();
         ambient.animate().cancel();
@@ -1461,6 +1515,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         heroArt.animate().cancel();
         heroArt.setAlpha(0f);
         heroShown = false;
+        if (!ambientAllowed()) return;
+        int color = adapter.ambientColorAt(position);
         if (!animations || reducedMotion) {
             setAmbient(color);
             ambient.setAlpha(1f);
@@ -1472,6 +1528,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         }
         // The same dip-and-swap as the dock's top shelf.
         ambient.animate().alpha(0.35f).setDuration(ambient.getAlpha() > 0.35f ? 200 : 0).withEndAction(() -> {
+            if (!ambientAllowed()) return;
             setAmbient(color);
             ambient.animate().alpha(1f).setDuration(500).start();
         }).start();
@@ -1486,7 +1543,9 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         heroShown = false;
         if (animations) {
             hero.animate().alpha(0f).setDuration(reducedMotion ? 100 : 160).start();
-            ambient.animate().alpha(0f).setDuration(reducedMotion ? 140 : 300).start();
+            if (ambientAllowed()) {
+                ambient.animate().alpha(0f).setDuration(reducedMotion ? 140 : 300).start();
+            }
             heroArt.animate().alpha(0f).setDuration(reducedMotion ? 140 : 300).start();
         } else {
             hero.setAlpha(0f);
@@ -1853,6 +1912,53 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             greeting.setTextColor(greetingColor);
         }
         if (shamsi) shamsiDate.setText(Shamsi.today());
+    }
+
+    // ---- weather line and Bing wallpaper (launcher settings; both off by default) -------------------
+
+    private void setUpWeatherLine(Config cfg) {
+        weatherView = findViewById(R.id.weather);
+        boolean wallpaper = cfg.bingWallpaper || (cfg.wallpaperEnabled && !cfg.wallpapers.isEmpty());
+        // Light glass: over a wallpaper the header text gets a soft shadow so it stays readable. Only with the
+        // glass dock or Bing's photo on, so a wallpaper set up before these options looks exactly as it did.
+        if (wallpaper && (cfg.glassDock || cfg.bingWallpaper)) {
+            for (int id : new int[]{R.id.greeting, R.id.clock, R.id.ampm, R.id.date, R.id.shamsiDate, R.id.heroName}) {
+                TextView t = findViewById(id);
+                if (t != null) t.setShadowLayer(6 * density, 0, 0.5f * density, 0x73000000);
+            }
+        }
+        if (!weatherLine || weatherView == null) return;
+        weatherIcon = new WeatherIconDrawable(Math.round(15 * density));
+        weatherView.setCompoundDrawablesRelative(weatherIcon, null, null, null);
+        if (wallpaper) weatherView.setShadowLayer(6 * density, 0, 0.5f * density, 0x73000000);
+    }
+
+    /** Shows the cached reading, or hides the line when there is none (weather off, never fetched, too old). */
+    private void updateWeather() {
+        if (weatherView == null || weatherIcon == null) return;
+        WeatherFetcher.Reading r = weatherLine ? WeatherFetcher.cached(this) : null;
+        if (r == null) {
+            weatherView.setVisibility(View.GONE);
+            return;
+        }
+        boolean chinese = "zh".equals(Locale.getDefault().getLanguage());
+        weatherIcon.setKind(WeatherCodes.icon(r.code));
+        weatherView.setText(WeatherInfo.line(r.city, WeatherCodes.label(r.code, chinese), r.temp));
+        weatherView.setVisibility(View.VISIBLE);
+    }
+
+    /** Network work while Home is visible: weather at most every 30 minutes, Bing once per day. */
+    private void refreshOnlineExtras() {
+        if (netExecutor == null || isFinishing()) return;
+        if (weatherLine) {
+            boolean chinese = "zh".equals(Locale.getDefault().getLanguage());
+            WeatherFetcher.refreshIfDue(this, chinese, netExecutor, () -> handler.post(this::updateWeather));
+        }
+        if (bingWallpaper) {
+            BingWallpaper.refreshIfDue(this, netExecutor, image -> handler.post(() -> {
+                if (!isDestroyed()) wallpaperPlayer.replace(image);
+            }));
+        }
     }
 
     // ---- race-weekend panel (a theme's race_calendar) -----------------------------------------------

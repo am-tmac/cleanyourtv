@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="wallpaper_manage">Manage wallpapers…</string>
+    <string name="wallpaper_manage_hint">Press OK to delete a wallpaper. Back returns to Wallpaper settings.</string>
+    <string name="wallpaper_delete_confirm">Delete this wallpaper?</string>
+    <string name="wallpaper_delete">Delete</string>
+    <string name="wallpaper_deleted">Deleted</string>
+    <string name="wallpaper_delete_failed">Could not delete wallpaper</string>
+    <string name="wallpaper_manage_empty">No saved wallpapers</string>
+    <string name="wallpaper_current">Currently used</string>
+    <string name="wallpaper_manage_close">Close</string>
+</resources>

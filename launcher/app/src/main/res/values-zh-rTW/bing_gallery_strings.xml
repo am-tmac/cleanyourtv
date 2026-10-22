@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="wallpaper_bing_choose">選擇 Bing 桌布…</string>
+    <string name="bing_gallery_hint">最近 %1$d 張 · 來源 %2$s · 方向鍵瀏覽 · 確定鍵選擇 · 返回鍵關閉</string>
+    <string name="bing_gallery_loading">正在載入 Bing 桌布…</string>
+    <string name="bing_gallery_error">無法載入必應桌布（必應和備用來源都無回應），請稍後重試。</string>
+    <string name="bing_gallery_retry">重試</string>
+    <string name="bing_gallery_applying">正在更換桌布…</string>
+    <string name="bing_gallery_selected">已選擇</string>
+    <string name="wallpaper_applied">桌布已更換</string>
+</resources>

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="wallpaper_manage">管理桌布…</string>
+    <string name="wallpaper_manage_hint">按確定鍵刪除桌布，按返回鍵回到桌布設定。</string>
+    <string name="wallpaper_delete_confirm">刪除這張桌布？</string>
+    <string name="wallpaper_delete">刪除</string>
+    <string name="wallpaper_deleted">已刪除</string>
+    <string name="wallpaper_delete_failed">無法刪除桌布</string>
+    <string name="wallpaper_manage_empty">尚無已儲存的桌布</string>
+    <string name="wallpaper_current">目前使用</string>
+    <string name="wallpaper_manage_close">關閉</string>
+</resources>

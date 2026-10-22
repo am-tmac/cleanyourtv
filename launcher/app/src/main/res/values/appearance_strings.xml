@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Launcher settings: light glass dock, weather line, Bing wallpaper. All off by default. -->
+    <string name="wallpaper_bing">Bing daily image</string>
+    <string name="wallpaper_hint">Bing daily image downloads today\'s Bing picture once a day (needs internet). Your own pictures appear in the list after you copy them to Android/data/com.gathin.tvhome/files/wallpapers/.</string>
+    <string name="wallpaper_dim_state">Wallpaper dimming: %1$s</string>
+    <string name="glass_dock">Glass dock</string>
+    <string name="glass_dock_hint">Light glass for the dock and the top buttons, with the wallpaper blurred behind it (Android 12 and newer; otherwise a translucent fill).</string>
+    <string name="weather_line">Weather</string>
+    <string name="weather_line_hint">Shows city, weather and temperature next to the clock. The city comes from your internet address (ipwho.is, ip-api.com or ipinfo.io), the weather from Open-Meteo; checked at most every 30 minutes while Home is on screen. Needs internet.</string>
+</resources>
