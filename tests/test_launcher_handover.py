@@ -139,7 +139,7 @@ class HandoverTest(unittest.TestCase):
         self.sdk = self.base / "android-sdk"
         self.sdk.mkdir()
 
-    def handover(self, android_home=None, **overrides):
+    def handover(self, android_home=None, extra_env=None, **overrides):
         state = {
             "stock_home": STOCK_HOME,
             "home": STOCK_HOME,
@@ -155,10 +155,11 @@ class HandoverTest(unittest.TestCase):
         state.update(overrides)
         self.state_path.write_text(json.dumps(state))
         env = {k: v for k, v in os.environ.items()
-               if k not in ("STOCK_LAUNCHER", "INPUT_KEY_SERVICE", "HOME_KEY_SERVICE")}
+               if k not in ("STOCK_LAUNCHER", "INPUT_KEY_SERVICE", "HOME_KEY_SERVICE", "RESTORE_KEY_SERVICES")}
         env.update(TV_HOST="192.168.1.50", FAKE_TV_STATE=str(self.state_path),
                    HOME=str(self.home), JAVA_HOME=str(self.base / "java"),
                    ANDROID_HOME=str(android_home or self.sdk))
+        env.update(extra_env or {})
         result = subprocess.run(
             ["bash", str(self.launcher / "build-and-install.sh")],
             cwd=self.launcher, env=env, capture_output=True, text=True, timeout=180,
@@ -183,6 +184,20 @@ class HandoverTest(unittest.TestCase):
         self.assertTrue(state["stock_disabled"])
         self.assertEqual(state["home"], NEW_HOME)
         self.assertIsNone(self.record())
+
+    def test_write_secure_settings_is_not_granted_by_default(self):
+        result, state = self.handover()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(any("WRITE_SECURE_SETTINGS" in c for c in state["commands"]))
+
+    def test_restore_key_services_grants_write_secure_settings_only(self):
+        result, state = self.handover(extra_env={"RESTORE_KEY_SERVICES": "1"})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        grants = [c for c in state["commands"] if "WRITE_SECURE_SETTINGS" in c]
+        self.assertEqual(len(grants), 1, state["commands"])
+        self.assertIn("pm grant com.gathin.tvhome android.permission.WRITE_SECURE_SETTINGS", grants[0])
+        # The grant alone never touches the enabled accessibility list.
+        self.assertFalse(any("enabled_accessibility_services" in c for c in state["commands"]))
 
     def test_launcher_that_does_not_start_leaves_stock_home_enabled(self):
         result, state = self.handover(start_fails=True)

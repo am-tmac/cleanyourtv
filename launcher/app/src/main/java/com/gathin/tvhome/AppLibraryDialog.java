@@ -134,8 +134,14 @@ final class AppLibraryDialog {
 
     void close() { dismissActions(); popup.dismiss(); }
 
+    /** Only the latest load fills the catalogue, and it shows the popup if an opening is waiting (LibraryLoads). */
+    private final LibraryLoads loads = new LibraryLoads();
+
     void show() {
-        refresh();
+        load(true);
+    }
+
+    private void reveal() {
         popup.showAtLocation(activity.getWindow().getDecorView(), Gravity.CENTER, 0, 0);
         View container = panel.getRootView();
         if (container.getLayoutParams() instanceof WindowManager.LayoutParams) {
@@ -153,6 +159,16 @@ final class AppLibraryDialog {
     private final java.util.Set<String> tvPackages = new java.util.HashSet<>();
 
     void refresh() {
+        load(false);
+    }
+
+    /**
+     * Reads the catalogue and fills it. reveal: from opening the library; the popup appears once the latest load has
+     * filled it. Here the read is synchronous, so the latest load is always this one; LibraryLoads keeps the same
+     * contract as upstream's off-thread loader so a refresh can never swallow an opening's reveal.
+     */
+    private void load(boolean reveal) {
+        int load = loads.start(reveal);
         dismissActions();
         PackageManager pm = activity.getPackageManager();
         Map<String, ResolveInfo> unique = new LinkedHashMap<>();
@@ -188,7 +204,9 @@ final class AppLibraryDialog {
             int byLabel = collator.compare(label(a), label(b));
             return byLabel != 0 ? byLabel : pa.compareTo(pb);
         });
+        if (!loads.isLatest(load)) return;
         showCatalog();
+        if (loads.takeReveal()) reveal();
     }
 
     private String label(ResolveInfo app) {

@@ -18,6 +18,8 @@ public final class JuosHomeRedirectService extends AccessibilityService {
     static final String STOPPED = "safety_stopped";
     private static final String HOME_PKG = "com.keylab.speech.view.vidaa";
     private static final String HOME_ACTIVITY = "com.ju.secondscreen.HomeActivity";
+    /** restore_key_services was on when the service connected: it is noted for ServiceRepair. */
+    private boolean repairRecord;
     private JuosHomeRedirectPolicy policy = new JuosHomeRedirectPolicy();
     private SharedPreferences preferences;
     private final Handler handler = new Handler(Looper.getMainLooper());
@@ -35,6 +37,17 @@ public final class JuosHomeRedirectService extends AccessibilityService {
         super.onServiceConnected();
         preferences = getSharedPreferences(PREFS, MODE_PRIVATE);
         preferences.registerOnSharedPreferenceChangeListener(listener);
+        // restore_key_services: note that the redirect runs, so Home can put it back on the enabled list after a
+        // force stop (an in-place update or a cleaner app). Turning it off in Settings unbinds it and drops the note.
+        repairRecord = Config.load(this).restoreKeyServices;
+        if (repairRecord) ServiceRepair.connected(this, getClass());
+    }
+
+    /** Unbound by Android: the user turned the service off, so Home doesn't put it back (ServiceRepair). */
+    @Override public boolean onUnbind(Intent intent) {
+        handler.removeCallbacks(recheck);
+        if (repairRecord) ServiceRepair.disconnected(this, getClass());
+        return super.onUnbind(intent);
     }
 
     @Override public void onAccessibilityEvent(AccessibilityEvent event) {

@@ -7,6 +7,7 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.os.Bundle;
 import android.provider.Settings;
+import android.view.View;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -16,6 +17,7 @@ import java.util.List;
 
 /** Remote-friendly settings owned by the launcher; system settings stay one row away. */
 public final class LauncherSettingsActivity extends Activity {
+    static final String EXTRA_REORDER = "com.gathin.tvhome.extra.REORDER_FROM_SETTINGS";
     private static final int BING_GALLERY_REQUEST = 301;
     private SharedPreferences choices;
     private final TextView[] columnChoices = new TextView[4];
@@ -38,6 +40,13 @@ public final class LauncherSettingsActivity extends Activity {
         setContentView(R.layout.activity_launcher_settings);
         choices = getSharedPreferences(Config.SETTINGS_NAME, MODE_PRIVATE);
         Config config = Config.load(this);
+        // launcher_settings_button: this page replaces the Settings long-press entry, so it also offers Reorder.
+        View reorderChoice = findViewById(R.id.reorderChoice);
+        reorderChoice.setVisibility(config.launcherSettingsButton ? View.VISIBLE : View.GONE);
+        reorderChoice.setOnClickListener(v -> {
+            setResult(RESULT_OK, new Intent().putExtra(EXTRA_REORDER, true));
+            finish();
+        });
         columns = config.columns;
         rowsBelowDock = config.rowsBelowDock;
         animations = config.animations;
@@ -160,7 +169,8 @@ public final class LauncherSettingsActivity extends Activity {
         findViewById(R.id.tvSettingsChoice).setOnClickListener(v ->
                 open(new Intent(Settings.ACTION_SETTINGS)));
         refresh();
-        columnChoices[Math.max(0, Math.min(columns - 4, 3))].requestFocus();
+        if (config.launcherSettingsButton) reorderChoice.requestFocus();
+        else columnChoices[Math.max(0, Math.min(columns - 4, 3))].requestFocus();
     }
 
     private void reverseRow(TextView[] views) {

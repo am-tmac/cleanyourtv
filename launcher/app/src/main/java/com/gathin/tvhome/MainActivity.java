@@ -11,6 +11,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.ApplicationInfo;
+import android.content.pm.ChangedPackages;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Color;
@@ -174,6 +175,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     private boolean reducedMotion;
     /** config.xml dock_row: the first row is a separate dock (band, parked low, top shelf) rather than plain grid. */
     private boolean dockRow;
+    /** config.xml launcher_settings_button: a click on Settings opens the launcher settings directly. */
+    private boolean launcherSettingsButton;
     /** Festive skin from the theme (see Festival); applied while it is active today. */
     private Festival festival = Festival.NONE;
     private boolean festive;
@@ -192,8 +195,14 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     private Dialog cardPrompt;
     /** Set when a decision could not be saved: no more prompts until the next resume, instead of asking in a loop. */
     private boolean promptsPaused;
-    /** Rebuild the tiles on resume: Home was fully hidden by an app, or Home was pressed. Not after a side panel such as Wi-Fi settings. */
-    private boolean rebuildOnResume = true;
+    /** Between onStop and onStart: Home was fully covered by an app. */
+    private boolean stopped;
+    /** Rebuild the tiles on the way back to Home only when apps changed meanwhile (TileRefresh). */
+    private final TileRefresh tileRefresh = new TileRefresh();
+    /** PackageManager's change counter at the last rebuild, to catch a package broadcast that never arrived. */
+    private int packageSequence;
+    /** launcher_settings_button: recreate() is queued, so the old activity must not consume a pending reorder. */
+    private boolean settingsRecreationPending;
     /** The Inputs or Module cards dropdown while one is open, so onPause can close it. */
     private PopupWindow openPopup;
     /** The long-press options panel of a tile, while it is open. */
@@ -268,6 +277,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             // Updates send REMOVED followed by ADDED; keep the tile until the new APK is ready.
             if (Intent.ACTION_PACKAGE_REMOVED.equals(intent.getAction())
                     && intent.getBooleanExtra(Intent.EXTRA_REPLACING, false)) return;
+            // In the background this only marks the tiles stale; onResume rebuilds them once.
+            if (!tileRefresh.onPackagesChanged()) return;
             reloadApps(false);
             if (appLibrary != null) appLibrary.refresh();
         }
@@ -300,6 +311,9 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         density = getResources().getDisplayMetrics().density;
         // config.xml, overlaid by config.json from a pushed theme (see Config and tools/theme.sh).
         Config cfg = Config.load(this);
+        // restore_key_services: after a force stop, put back the accessibility helpers (Home redirect included)
+        // that Android took off the list. Appends only; needs WRITE_SECURE_SETTINGS (RESTORE_KEY_SERVICES=1).
+        if (cfg.restoreKeyServices) ServiceRepair.restore(this);
         LibraryApps.migrateLegacyHidden(this);   // before the first tile load keeps old hidden apps hidden
         settingsKeycodes = cfg.settingsKeycodes;
         settingsKeyPanel = cfg.settingsKeyPanel;
@@ -514,7 +528,16 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             open(systemIntent(Settings.ACTION_WIFI_SETTINGS));
             return true;
         });
-        btnSettings.setOnClickListener(v -> open(systemIntent(Settings.ACTION_SETTINGS)));
+        launcherSettingsButton = cfg.launcherSettingsButton;
+        if (launcherSettingsButton) {
+            ((TextView) btnSettings).setText(R.string.launcher_settings);
+            ((TextView) btnSettings).setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ic_home_settings_pill, 0, 0, 0);
+        }
+        btnSettings.setOnClickListener(v -> {
+            if (launcherSettingsButton) startActivityForResult(
+                    new Intent(this, LauncherSettingsActivity.class), LAUNCHER_SETTINGS_REQUEST);
+            else open(systemIntent(Settings.ACTION_SETTINGS));
+        });
         btnReorder = findViewById(R.id.btnReorder);
         btnReorder.setOnClickListener(v -> toggleReorder());
         btnReorder.setVisibility(cfg.reorderButton ? View.VISIBLE : View.GONE);
@@ -591,6 +614,13 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         packageFilter.addAction(Intent.ACTION_PACKAGE_CHANGED);
         packageFilter.addDataScheme("package");
         timeFilter.addAction(Intent.ACTION_TIMEZONE_CHANGED);
+        // Registered for the activity's whole life, not only while it is started: an app installed or updated while
+        // another app is in front must still mark the tiles stale, or Home would have to rebuild on every return.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(packageReceiver, packageFilter, Context.RECEIVER_NOT_EXPORTED);
+        } else {
+            registerReceiver(packageReceiver, packageFilter);
+        }
 
         ConnectivityManager cm = getSystemService(ConnectivityManager.class);
         TvInputManager tim = (TvInputManager) getSystemService(TV_INPUT_SERVICE);
@@ -626,20 +656,25 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         grid.scrollToPosition(0);
         lastFocused = 0;
         lastFocusedKey = adapter.getItemCount() > 0 ? adapter.keyAt(0) : null;
-        rebuildOnResume = true;
+        if (stopped) {
+            tileRefresh.onHomeAgain();
+        } else {
+            // Home was already in front: the tiles are current, so only go back to the first one.
+            grid.post(() -> focusTile(0));
+        }
     }
 
     @Override
     protected void onStart() {
         super.onStart();
+        stopped = false;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(packageReceiver, packageFilter, Context.RECEIVER_NOT_EXPORTED);
             registerReceiver(timeReceiver, timeFilter, Context.RECEIVER_NOT_EXPORTED);
         } else {
-            registerReceiver(packageReceiver, packageFilter);
             registerReceiver(timeReceiver, timeFilter);
         }
         updateClockVisibility();
+        tileRefresh.onStart();
     }
 
     @Override
@@ -651,11 +686,19 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             return;
         }
         promptsPaused = false;
-        if (rebuildOnResume) {
-            tilesReady = false;
-            reloadApps(true);
+        switch (tileRefresh.onResume(packagesChangedSinceRebuild())) {
+            case REBUILD:
+                tilesReady = false;
+                reloadApps(true);
+                break;
+            case REFOCUS:
+                // The same tiles: only the focus goes back, as after a rebuild, without replaying the entrance.
+                tilesReady = false;
+                reloadApps(true, false, false);
+                break;
+            default:
+                break;
         }
-        rebuildOnResume = false;
         updateGreeting();
         updateRace();
         updateWifiLabel();
@@ -680,11 +723,39 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode == LAUNCHER_SETTINGS_REQUEST && resultCode == RESULT_OK) recreate();
+        if (requestCode == LAUNCHER_SETTINGS_REQUEST && resultCode == RESULT_OK) {
+            if (data != null && data.getBooleanExtra(LauncherSettingsActivity.EXTRA_REORDER, false)) {
+                getIntent().putExtra(LauncherSettingsActivity.EXTRA_REORDER, true);
+            }
+            // The old activity must not consume the pending action while recreation is queued.
+            settingsRecreationPending = true;
+            // Reload saved layout choices before entering the existing Home reorder mode.
+            recreate();
+        }
+    }
+
+    private void startPendingSettingsReorder() {
+        if (settingsRecreationPending || !tilesReady || !hasWindowFocus() || isFinishing()
+                || !getIntent().getBooleanExtra(LauncherSettingsActivity.EXTRA_REORDER, false)) return;
+        getIntent().removeExtra(LauncherSettingsActivity.EXTRA_REORDER);
+        toggleReorder();
     }
 
     /** Rebuilds the tiles (and the module cards), then puts focus back where it was. */
     private void reloadApps(boolean animate) {
+        reloadApps(animate, true);
+    }
+
+    /** @param rebuild false keeps the tiles as they are and only puts focus back (TileRefresh.Action.REFOCUS). */
+    private void reloadApps(boolean animate, boolean rebuild) {
+        reloadApps(animate, rebuild, true);
+    }
+
+    /**
+     * @param entrance false puts focus back as an animated reload would, without replaying the tiles' entrance:
+     *                 on a return to the same tiles it would only mark a change that didn't happen.
+     */
+    private void reloadApps(boolean animate, boolean rebuild, boolean entrance) {
         cancelPendingFocusScroll();
         RecyclerView.ViewHolder footer = grid.findViewHolderForAdapterPosition(adapter.appCount());
         final boolean restoreLibrary = adapter.isLibraryAt(adapter.appCount()) && footer != null
@@ -703,8 +774,12 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             heroArt.animate().cancel();
             heroArt.setAlpha(0f);
         }
-        reloadTiles();
-        if (animate && animations && !reducedMotion) grid.scheduleLayoutAnimation();
+        if (rebuild) reloadTiles();
+        if (animate && entrance && animations && !reducedMotion) {
+            grid.scheduleLayoutAnimation();
+            // A rebuild redraws the grid anyway; without one the entrance needs a draw to start.
+            if (!rebuild) grid.invalidate();
+        }
 
         if (restoreFocus) {
             // Keep a focused footer at the end even when the app count changes.
@@ -718,8 +793,20 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             if (pos < 0) hideHero();
             // A newly installed app may have brought a card with it.
             tilesReady = true;
+            startPendingSettingsReorder();
             showCardPrompt();
         }
+    }
+
+    /** True when PackageManager reports apps changed since the last rebuild (one binder call). */
+    private boolean packagesChangedSinceRebuild() {
+        ChangedPackages changed = getPackageManager().getChangedPackages(packageSequence);
+        return changed != null && !changed.getPackageNames().isEmpty();
+    }
+
+    private int currentPackageSequence(int since) {
+        ChangedPackages changed = getPackageManager().getChangedPackages(since);
+        return changed != null ? changed.getSequenceNumber() : since;
     }
 
     /**
@@ -743,6 +830,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         adapter.reload(cards.isEmpty() ? none : CardFeature.run(() -> Cards.shown(cards), none));
         lastFocusedKey = returnKey;
         lastFocused = returnSlot;
+        packageSequence = currentPackageSequence(packageSequence);
     }
 
     /**
@@ -758,6 +846,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             if (returnToLibrary || libraryFocusPending) focusLibrary();
             else focusTile(pos >= 0 ? pos : returnSlot);
             tilesReady = true;
+            startPendingSettingsReorder();
             showCardPrompt();
         });
     }
@@ -785,16 +874,17 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     @Override
     protected void onStop() {
         super.onStop();
-        unregisterReceiver(packageReceiver);
         unregisterReceiver(timeReceiver);
         handler.removeCallbacks(clockCheck);
-        rebuildOnResume = true;
+        stopped = true;
+        tileRefresh.onStop();
     }
 
     @Override
     public void onWindowFocusChanged(boolean hasFocus) {
         super.onWindowFocusChanged(hasFocus);
         if (hasFocus) {
+            startPendingSettingsReorder();
             if (libraryFocusPending && appLibrary == null) focusLibrary();
             showCardPrompt();
         }
@@ -803,6 +893,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     @Override
     protected void onDestroy() {
         super.onDestroy();
+        unregisterReceiver(packageReceiver);
         wallpaperPlayer.close();
         if (netExecutor != null) netExecutor.shutdownNow();
         ConnectivityManager cm = getSystemService(ConnectivityManager.class);
@@ -2441,13 +2532,16 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
 
     // ---- launcher settings and module cards -------------------------------------------------------
 
-    /** Keep a normal Settings click for the TV; the launcher's choices live behind hold OK. */
+    /**
+     * Hold OK on Settings. A normal click opens the TV's Settings, or with launcher_settings_button the launcher
+     * settings directly; then that row is left out here and the other home actions stay.
+     */
     private void showSettingsMenu() {
         View anchor = findViewById(R.id.btnSettings);
         View panel = getLayoutInflater().inflate(R.layout.popup_inputs, root, false);
         LinearLayout rows = panel.findViewById(R.id.rows);
         PopupWindow popup = glassPopup(panel, (int) (200 * density));
-        addSettingsMenuRow(rows, popup, R.string.launcher_settings, () -> startActivityForResult(
+        if (!launcherSettingsButton) addSettingsMenuRow(rows, popup, R.string.launcher_settings, () -> startActivityForResult(
                 new Intent(this, LauncherSettingsActivity.class), LAUNCHER_SETTINGS_REQUEST));
         if (moduleCards) addSettingsMenuRow(rows, popup, R.string.module_cards, this::showModuleCards);
         if (dockRow) addSettingsMenuRow(rows, popup, R.string.dock_edit, this::startDockEdit);

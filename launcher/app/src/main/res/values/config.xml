@@ -78,6 +78,14 @@
          Both keys can also be set from a theme's config.json ("settings_key_keycodes": [83]). -->
     <bool name="settings_key_panel">false</bool>
 
+    <!-- A force stop of the launcher (Settings, a cleaner app, am force-stop) takes its accessibility services
+         (HomeKeyService, InputKeyService and, on Vidda, JuosHomeRedirectService) off the enabled list. true: Home
+         appends the ones that were running back when it starts; one turned off in Settings stays off, and other
+         services are never removed or reordered. Needs WRITE_SECURE_SETTINGS, which build-and-install grants with
+         RESTORE_KEY_SERVICES=1 (-RestoreKeyServices on Windows). Vidda default true: the C3S loses the Home redirect
+         otherwise. Can also be set with "restore_key_services" in a theme's config.json. -->
+    <bool name="restore_key_services">true</bool>
+
     <!-- More remote buttons that open the input switcher, by Android keycode (INPUT_KEY_SERVICE=1
          build-and-install.sh; KEYCODE_TV always does). For buttons only a disabled app answered: the Xiaomi
          MiTV-AXFR2 remote's PatchWall button is 192 (KEYCODE_BUTTON_5). `dumpsys window policy` lists which
@@ -111,6 +119,9 @@
     <!-- A reorder button (two arrows) in the top bar. Off by default: reordering is also in the Settings
          button's long-press menu, so it needs no extra button on screen. -->
     <bool name="reorder_button">false</bool>
+    <!-- A direct Launcher settings action instead of TV Settings on the header Settings button; hold OK keeps the
+         other home actions. Off by default; a theme can set "launcher_settings_button": true. -->
+    <bool name="launcher_settings_button">false</bool>
 
     <!-- Grid rows left visible under the dock on the home screen. 0 = dock sits at the very bottom. Tiles shrink if
          the dock, its title and this many rows would not otherwise fit the screen height. -->
