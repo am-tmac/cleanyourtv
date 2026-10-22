@@ -52,8 +52,9 @@
          offers one row that starts this service: component first, then action. The component can also be an
          activity, for sets whose panel is a dialog (BYINTEK U4). With no Live TV app either, the Inputs pill
          opens the panel directly instead of a menu. Leave empty to omit. -->
-    <string name="source_panel_service" translatable="false"></string>
-    <string name="source_panel_action" translatable="false"></string>
+    <!-- Vidda C3S (JUOS): no TvInputManager inputs; Hisense's own panel is this exported service. -->
+    <string name="source_panel_service" translatable="false">com.hisense.tv.inputs/com.hisense.tv.InputsUIService</string>
+    <string name="source_panel_action" translatable="false">com.hisense.tv.start_inputs</string>
 
     <!-- Inputs menu: HDMI and AV rows normally open with ACTION_VIEW on the input's channel URI, which the
          Live TV app handles. Where nothing answers that, this action is sent with the same URI instead
