@@ -29,13 +29,9 @@ if (-not $env:JAVA_HOME -or -not (Test-Path "$env:JAVA_HOME\bin\java.exe")) {
     $env:JAVA_HOME = $jbr
 }
 $sdk = if ($env:ANDROID_HOME) { $env:ANDROID_HOME } else { "$env:LOCALAPPDATA\Android\Sdk" }
-if (-not (Test-Path $sdk -PathType Container)) { throw "no Android SDK at '$sdk': install Android Studio or set ANDROID_HOME to the SDK folder" }
-# sdk.dir follows the SDK of this run (as in build-and-install.sh); other lines are kept. The -replace
-# doubles each backslash, which is how a .properties file spells one.
-$props = @()
-if (Test-Path local.properties) { $props = @(Get-Content local.properties | Where-Object { $_ -notmatch '^sdk\.dir=' }) }
-$props += "sdk.dir=$($sdk -replace '\\', '\\')"
-$props | Out-File -Encoding ascii local.properties
+if (-not (Test-Path local.properties)) {
+    "sdk.dir=$($sdk -replace '\\', '\\')" | Out-File -Encoding ascii local.properties
+}
 
 .\gradlew.bat assembleRelease -q --console=plain
 if ($LASTEXITCODE -ne 0) { throw 'Gradle build failed' }
@@ -70,10 +66,18 @@ if ($LASTEXITCODE -ne 0) { throw 'APK upload failed' }
 $out = & $py -I ..\tools\tv.py 'pm install -r /data/local/tmp/tvhome.apk; rm -f /data/local/tmp/tvhome.apk'
 Write-Host $out
 if ($LASTEXITCODE -ne 0 -or "$out" -notmatch 'Success') { throw 'pm install failed; the stock launcher was left untouched' }
-# Same order as build-and-install.sh: start the launcher on its own before the stock Home is touched
-# (#239); in the batch a failed start only prints an Error line and the stock launcher would be
-# disabled anyway. The Home preference is set in the batch, after the stock launcher is disabled.
-$start = (& $py -I ..\tools\tv.py 'am start -W -n com.gathin.tvhome/.MainActivity') -join "`n"
+# Stop the instance Android restarted mid-update, which can come up non-occluding (see build-and-install.sh,
+# #1101), and write back a key helper the force stop took off the list. Through stdin: Windows PowerShell 5.1
+# drops the inner double quotes from a native argument.
+'s=$(settings get secure enabled_accessibility_services); a=$(settings get secure accessibility_enabled); am force-stop com.gathin.tvhome; case "$s" in *com.gathin.tvhome*) settings put secure enabled_accessibility_services ""; settings put secure enabled_accessibility_services "$s"; settings put secure accessibility_enabled "$a" ;; esac' |
+    & $py -I ..\tools\tv.py --batch | Out-Null
+# Android 9 only accepts a component here; Android 10+ also takes a bare package name.
+$out = & $py -I ..\tools\tv.py 'cmd package set-home-activity --user 0 com.gathin.tvhome/.MainActivity'
+Write-Host $out
+if ($LASTEXITCODE -ne 0 -or "$out" -match 'Error') { throw 'could not set the new launcher as home; the stock launcher was left untouched' }
+# Start the launcher on its own, before the stock Home is touched (see build-and-install.sh, #239):
+# in the batch a failed start only prints an Error line and the stock launcher would be disabled anyway.
+$start = (& $py -I ..\tools\tv.py 'am start -W -a android.intent.action.MAIN -c android.intent.category.HOME -n com.gathin.tvhome/.MainActivity') -join "`n"
 Write-Host $start
 if ($LASTEXITCODE -ne 0 -or $start -notmatch 'Status: ok' -or $start -match '(?m)^Error') { throw "the new launcher did not start (see above); $StockLauncher was left enabled" }
 @(
@@ -140,7 +144,8 @@ function Enable-Service([string]$Name) {
     $svc = "com.gathin.tvhome/.$Name"
     # Through stdin: Windows PowerShell 5.1 drops the inner double quotes from a native argument, and the
     # TV's shell then fails with "no closing quote" while the service stays off.
-    ('s=$(settings get secure enabled_accessibility_services); case "$s" in *' + $Name + '*) ;; null|"") settings put secure enabled_accessibility_services ' + $svc + ' ;; *) settings put secure enabled_accessibility_services "$s:' + $svc + '" ;; esac; settings put secure accessibility_enabled 1; echo ' + $Name + ' enabled') |
+    # TCL names the op AUTO_START or APP_AUTO_START; without write-settings the grant is lost at the next reboot.
+    ('cmd appops set com.gathin.tvhome AUTO_START allow 2>/dev/null; cmd appops set com.gathin.tvhome APP_AUTO_START allow 2>/dev/null; appops write-settings 2>/dev/null; s=$(settings get secure enabled_accessibility_services); case "$s" in *' + $Name + '*) settings put secure enabled_accessibility_services ""; settings put secure accessibility_enabled 0; sleep 1; settings put secure enabled_accessibility_services "$s" ;; null|"") settings put secure enabled_accessibility_services ' + $svc + ' ;; *) settings put secure enabled_accessibility_services "$s:' + $svc + '" ;; esac; settings put secure accessibility_enabled 1; echo ' + $Name + ' enabled') |
         & $py -I ..\tools\tv.py --batch
     if ($LASTEXITCODE -ne 0) { throw "could not enable $Name (tv.py exit code $LASTEXITCODE); Home is already the new launcher" }
 }

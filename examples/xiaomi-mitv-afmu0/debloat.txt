@@ -3,7 +3,7 @@
 # Fingerprint: Xiaomi/twilight/twilight:14/UKG3.250826.001/V816.0.11.0.UZFAABX:user/release-keys
 #
 # Apply:   TV_HOST=<box ip> tools/disable.sh examples/xiaomi-mitv-afmu0/debloat.txt
-# Undo:    TV_HOST=<box ip> tools/restore.sh examples/xiaomi-mitv-afmu0/debloat.txt
+# Undo:    TV_HOST=<box ip> tools/restore.sh examples/xiaomi-mitv-afmu0/debloat.txt com.google.android.apps.tv.launcherx
 # Everything is DISABLED, not uninstalled.
 # Tested for one evening so far (Home, grid, D-pad, dock apps) and across one reboot: the disabled list and the
 # default home survive it. Not lived with for days yet.
@@ -40,8 +40,15 @@ com.xm.webcontent
 android.autoinstalls.config.soc.amlogic
 
 # Personal choice: voice assistant, phone remote, Mi cast/share (the mic button stops working)
-com.google.android.katniss
-com.google.android.tv.remote.service
+# KEPT ON here, measured on firmware V816.0.7.0.UZFAABX on two units: the mic button does NOT come
+# back by re-enabling katniss alone. com.google.android.tv.remote.service, listed below, is the
+# Google TV bridge for the physical remote: with it off, the remote's Bluetooth microphone never
+# reaches the assistant, so the button opens the Assistant and it records silence. Re-enable both
+# (`pm enable com.google.android.katniss`, then `pm enable com.google.android.tv.remote.service`;
+# one package per command) and the mic works.
+# Left commented so check.py does not report drift and re-applying the list does not break it again.
+# com.google.android.katniss
+# com.google.android.tv.remote.service
 com.xiaomi.mitv.smartshare
 com.xiaomi.wfdsinkhelperservice
 com.xiaomi.mi_connect_service

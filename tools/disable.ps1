@@ -17,26 +17,26 @@ if (-not (Test-Path $py)) { throw 'run: python -m venv tools\venv; tools\venv\Sc
 if (-not $TvHost) { throw 'pass -TvHost <tv ip> or set $env:TV_HOST' }
 $env:TV_HOST = $TvHost
 
-# Same reading as disable.sh and recovery.py: everything from the first '#' is a note, and a line holds
-# exactly one package name (a second one used to be dropped silently).
+$pkgs = Get-Content $List | ForEach-Object { ($_ -replace '#.*$', '').Trim() } | Where-Object { $_ } | ForEach-Object { ($_ -split '\s+')[0] }
 # Lists come from contributors and each name is pasted into a shell command on the TV (#165).
-$lineNo = 0
-$bad = @()
-$multi = @()
-$pkgs = @(foreach ($raw in Get-Content $List) {
-    $lineNo++
-    $line = ($raw -replace '#.*$', '').Trim()
-    if (-not $line) { continue }
-    $tokens = @($line -split '\s+')
-    $bad += @($tokens | Where-Object { $_ -notmatch '^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)+$' })
-    if ($tokens.Count -gt 1) { $multi += "line ${lineNo}: $line" }
-    $tokens[0]
-})
+$bad = @($pkgs | Where-Object { $_ -notmatch '^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)+$' })
 if ($bad.Count -gt 0) {
     throw "refusing $List, not a package name: $($bad -join ', ')"
 }
-if ($multi.Count -gt 0) {
-    throw "refusing $List, one package name per line: $($multi -join '; ')"
+# Nothing to do: a list whose entries are all commented out is what CONTRIBUTING asks for while one
+# is untested. Say it here, before a query goes to the TV, rather than letting recovery.py stop the run
+# after them with a message about the record.
+if (-not $pkgs -or $pkgs.Count -eq 0) {
+    throw "refusing ${List}: no package names in it (every line is a comment or blank), so nothing was sent to the TV and no recovery record was written."
+}
+# Core Android packages, the same block as disable.sh: with one of these disabled Android itself can stop
+# booting (#884, an original Mi TV Stick). No switch overrides it. Keep both patterns in step with
+# disable.sh and recovery.py (tests/test_core_packages.py).
+$coreRe = '^(android|com\.android\.systemui|com\.android\.shell|com\.android\.phone|com\.android\.settings|com\.android\.tv\.settings|com\.(google\.)?android\.(permissioncontroller|packageinstaller|ext\.services|ext\.shared|modulemetadata)|com\.google\.android\.overlay\.modules.*|com\.android\.providers\..*)$'
+$coreOk = '^com\.android\.providers\.(calendar|contacts|userdictionary|blockednumber)$'
+$core = @($pkgs | Where-Object { $_ -cmatch $coreRe -and $_ -cnotmatch $coreOk })
+if ($core.Count -gt 0) {
+    throw "refusing ${List}: it disables core Android packages, and without them the TV may not boot again (#884): $($core -join ', '). Take these lines out of the list (or comment them) and run it again. Nothing was changed on the TV."
 }
 # A Wi-Fi network saved during the first-run wizard belongs to setupwraith, and Android deletes it when
 # setupwraith is disabled. Skip it while it owns the saved network; `$env:FORCE_SETUPWRAITH=1` overrides.
@@ -82,7 +82,8 @@ function Read-HomeLaunchers {
     $parsed = @($lines | ForEach-Object {
         if ("$_".Trim() -match '^([A-Za-z0-9_.]+)/([A-Za-z0-9_.$]+)$') { [pscustomobject]@{ Pkg = $Matches[1]; Cls = $Matches[2] } }
     })
-    $usable = @($parsed | Where-Object { $_.Cls -notmatch 'FallbackHome$' -and $notLaunchers -notcontains $_.Pkg } |
+    # Nor is a factory-test app (com.duokan.factorytest/.FactoryLauncher answers HOME on a Mi TV 4A).
+    $usable = @($parsed | Where-Object { $_.Cls -notmatch 'FallbackHome$' -and $notLaunchers -notcontains $_.Pkg -and $_.Pkg -notmatch 'factorytest|factory_test|factorymode' } |
         ForEach-Object { $_.Pkg } | Sort-Object -Unique)
     [pscustomobject]@{ Ok = ($answered -and $parsed.Count -gt 0); Launchers = $usable }
 }
@@ -93,7 +94,23 @@ if (-not $env:FORCE_HOME -and $pkgs.Count -gt 0) {
     if ($LASTEXITCODE -ne 0) { $homeLine = '' }
     $ErrorActionPreference = 'Stop'
     $homePkg = "$homeLine".Trim() -split '/' | Select-Object -First 1
-    if ($homePkg -match '^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)+$') {
+    # "android" is the chooser: the TV did answer, Home just has no default. Kept for the warning below,
+    # which runs after $homePkg is cleared.
+    $homeChooser = $homePkg -eq 'android'
+    # `cmd` arrived with Android 7 (Nougat): on an older set this query answers nothing, or the shell's
+    # own "cmd: not found", and the guard was skipped without a word (disable.sh, #795). `dumpsys
+    # activity` prints the package holding Home on those sets: mHomeProcess: ProcessRecord{... pkg/u0a56}
+    $pkgShape = '^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)+$'
+    if (-not ($homePkg -and ($homePkg -match $pkgShape))) {
+        $ErrorActionPreference = 'Continue'
+        $fallback = @(& $py -I $tvPy 'dumpsys activity' 2>$null | ForEach-Object {
+            $line = "$_".Trim()
+            if ($line -match 'mHomeProcess:.*[: ]([A-Za-z0-9_.]+)/[A-Za-z0-9_.]+') { $Matches[1] }
+        } | Select-Object -First 1)
+        $ErrorActionPreference = 'Stop'
+        $homePkg = if ($fallback.Count -gt 0 -and "$($fallback[0])" -match $pkgShape) { "$($fallback[0])" } else { '' }
+    }
+    if ($homePkg) {
         if ($pkgs -contains $homePkg) {
             $found = Read-HomeLaunchers
             $others = @(@($found.Launchers) | Where-Object { $_ -ne $homePkg -and $pkgs -notcontains $_ })
@@ -103,13 +120,15 @@ if (-not $env:FORCE_HOME -and $pkgs.Count -gt 0) {
             }
         }
     } else {
+        # No single owner: Android's chooser ("android", launchers tie), or neither query named one.
+        # Fail closed: judge by the HOME claimants, and without those keep the known stock launchers.
         $found = Read-HomeLaunchers
         if ($found.Ok) {
             $listed = @(@($found.Launchers) | Where-Object { $pkgs -contains $_ })
             $others = @(@($found.Launchers) | Where-Object { $pkgs -notcontains $_ })
             if ($listed.Count -gt 0 -and $others.Count -eq 0) {
                 foreach ($p in $listed) {
-                    Write-Warning "Skipping ${p}: Home has no default ($(if ($homePkg) { $homePkg } else { 'no answer' })), and once the list is applied no other app could answer Home. Make the new launcher Home first, or set `$env:FORCE_HOME=1."
+                    Write-Warning "Skipping ${p}: Home has no default, and once the list is applied no other app could answer Home. Make the new launcher Home first, or set `$env:FORCE_HOME=1."
                     $pkgs = @($pkgs | Where-Object { $_ -ne $p })
                 }
             }
@@ -122,10 +141,12 @@ if (-not $env:FORCE_HOME -and $pkgs.Count -gt 0) {
             }
         }
     }
+    # Neither query named Home, so the guard could only go by the apps that answer Home. Say so (disable.sh, #795).
+    if (-not $homePkg -and $pkgs.Count -gt 0) {
+        $why = if ($homeChooser) { 'Home has no default on this TV (resolve-activity answered "android", the chooser), so the Home guard went by the apps that answer Home instead.' } else { 'Could not tell which app owns Home on this TV, so the Home guard went by the apps that answer Home instead: neither "cmd package resolve-activity" (added in Android 7) nor "dumpsys activity" named one.' }
+        Write-Warning "$why Check by hand that the list does not hold your launcher before running it: the replacement launcher needs Android 8.0 (minSdk 26), so on an older set the stock launcher is the only Home there is, and a set with no recovery has no way back (#795)."
+    }
 }
-# Two packages people usually want to keep (disable.sh). Not refused: a note, so the choice is conscious.
-if ($pkgs -contains 'com.google.android.katniss') { Write-Warning 'Note: com.google.android.katniss is the voice assistant (remote mic / voice search); it stops working while disabled.' }
-if ($pkgs -contains 'com.google.android.tv') { Write-Warning 'Note: com.google.android.tv is Live Channels (Live TV / tuner guide); the tuner app stops working while disabled.' }
 # Same as disable.sh (#321): a package that asks for android.permission.TV_INPUT_HARDWARE is the software
 # layer under the HDMI, AV and tuner inputs. Disable one and the port still notices the cable but shows
 # "No Signal" for good; re-enabling the pieces in batches does not bring the picture back, a full restore
@@ -147,6 +168,33 @@ if (-not $env:TVINPUT_ALLOW -and $pkgs.Count -gt 0) {
                 Write-Warning "Skipping ${p}: it asks for android.permission.TV_INPUT_HARDWARE, so it is the software layer under the HDMI/AV/tuner inputs. With it disabled those inputs still notice the cable but stay black (No Signal), and re-enabling the pieces in batches does not restore the picture: a full restore plus a cold boot does (#321). Set `$env:TVINPUT_ALLOW=1 to disable it."
                 $pkgs = @($pkgs | Where-Object { $_ -ne $p })
             }
+        }
+    }
+}
+# Same as disable.sh: keep the apps the TV opens its HDMI inputs (VIEW on a passthrough channel) and
+# Settings with, asked from the TV rather than guessed by name. `$env:HANDLERS_ALLOW=1` disables them anyway.
+if (-not $env:HANDLERS_ALLOW -and $pkgs.Count -gt 0) {
+    $q = 'cmd package query-activities --brief'
+    $ErrorActionPreference = 'Continue'
+    $handlers = @(& $py -I (Join-Path $repo 'tools\tv.py') "$q -a android.intent.action.VIEW -t vnd.android.cursor.item/channel 2>/dev/null; echo ==; $q -a android.settings.SETTINGS 2>/dev/null; true" 2>$null)
+    $checked = $LASTEXITCODE -eq 0
+    $ErrorActionPreference = 'Stop'
+    if (-not $checked) {
+        Write-Warning 'Could not check which listed packages open the TV''s inputs and Settings (tv.py failed). After this run, open an HDMI input and Settings from the launcher before you put the remote down.'
+    } else {
+        # `@()` so an empty or one-line answer is still an array: IndexOf throws on $null.
+        $lines = @($handlers | ForEach-Object { $_.Trim() })
+        $split = [array]::IndexOf($lines, '==')
+        for ($i = 0; $i -lt $lines.Count; $i++) {
+            if ($lines[$i] -notmatch '^([A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)+)/') { continue }
+            $p = $Matches[1]
+            if ($pkgs -notcontains $p) { continue }
+            if ($split -lt 0 -or $i -lt $split) {
+                Write-Warning "Skipping ${p}: the TV opens its HDMI/AV inputs and channels with it, so with it disabled the launcher's input tiles do nothing. Set `$env:HANDLERS_ALLOW=1 to disable it anyway."
+            } else {
+                Write-Warning "Skipping ${p}: the TV opens Settings with it, so with it disabled Settings does not open (and with it the way back to Developer options). Set `$env:HANDLERS_ALLOW=1 to disable it anyway."
+            }
+            $pkgs = @($pkgs | Where-Object { $_ -ne $p })
         }
     }
 }

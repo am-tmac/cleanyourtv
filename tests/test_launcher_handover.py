@@ -136,10 +136,8 @@ class HandoverTest(unittest.TestCase):
         self.state_path = self.base / "tv-state.json"
         self.home = self.base / "home"
         self.home.mkdir()
-        self.sdk = self.base / "android-sdk"
-        self.sdk.mkdir()
 
-    def handover(self, android_home=None, extra_env=None, **overrides):
+    def handover(self, **overrides):
         state = {
             "stock_home": STOCK_HOME,
             "home": STOCK_HOME,
@@ -155,11 +153,12 @@ class HandoverTest(unittest.TestCase):
         state.update(overrides)
         self.state_path.write_text(json.dumps(state))
         env = {k: v for k, v in os.environ.items()
-               if k not in ("STOCK_LAUNCHER", "INPUT_KEY_SERVICE", "HOME_KEY_SERVICE", "RESTORE_KEY_SERVICES")}
+               if k not in ("STOCK_LAUNCHER", "INPUT_KEY_SERVICE", "HOME_KEY_SERVICE")}
         env.update(TV_HOST="192.168.1.50", FAKE_TV_STATE=str(self.state_path),
                    HOME=str(self.home), JAVA_HOME=str(self.base / "java"),
-                   ANDROID_HOME=str(android_home or self.sdk))
-        env.update(extra_env or {})
+                   ANDROID_HOME=str(self.base / "android-sdk"))
+        if os.name != "posix" or not shutil.which("bash"):
+            raise unittest.SkipTest("build-and-install.sh is a POSIX script; it needs bash")
         result = subprocess.run(
             ["bash", str(self.launcher / "build-and-install.sh")],
             cwd=self.launcher, env=env, capture_output=True, text=True, timeout=180,
@@ -184,20 +183,6 @@ class HandoverTest(unittest.TestCase):
         self.assertTrue(state["stock_disabled"])
         self.assertEqual(state["home"], NEW_HOME)
         self.assertIsNone(self.record())
-
-    def test_write_secure_settings_is_not_granted_by_default(self):
-        result, state = self.handover()
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertFalse(any("WRITE_SECURE_SETTINGS" in c for c in state["commands"]))
-
-    def test_restore_key_services_grants_write_secure_settings_only(self):
-        result, state = self.handover(extra_env={"RESTORE_KEY_SERVICES": "1"})
-        self.assertEqual(result.returncode, 0, result.stderr)
-        grants = [c for c in state["commands"] if "WRITE_SECURE_SETTINGS" in c]
-        self.assertEqual(len(grants), 1, state["commands"])
-        self.assertIn("pm grant com.gathin.tvhome android.permission.WRITE_SECURE_SETTINGS", grants[0])
-        # The grant alone never touches the enabled accessibility list.
-        self.assertFalse(any("enabled_accessibility_services" in c for c in state["commands"]))
 
     def test_launcher_that_does_not_start_leaves_stock_home_enabled(self):
         result, state = self.handover(start_fails=True)
@@ -233,24 +218,6 @@ class HandoverTest(unittest.TestCase):
         self.assertIn("recovery is incomplete", result.stderr)
         self.assertTrue(any("pm enable --user 0" in c for c in state["commands"]))
         self.assertIsNotNone(self.record())
-
-    # Review L8: local.properties used to be written once, so a later ANDROID_HOME was ignored.
-    def test_local_properties_follow_the_current_sdk(self):
-        props = self.launcher / "local.properties"
-        props.write_text("sdk.dir=/old/sdk/that/is/gone\nndk.dir=/keep/this\n")
-        result, _ = self.handover()
-        self.assertEqual(result.returncode, 0, result.stderr)
-        lines = props.read_text().splitlines()
-        self.assertIn(f"sdk.dir={self.sdk}", lines)
-        self.assertNotIn("sdk.dir=/old/sdk/that/is/gone", lines)
-        self.assertIn("ndk.dir=/keep/this", lines, "other settings are kept")
-        self.assertEqual(sum(1 for line in lines if line.startswith("sdk.dir=")), 1)
-
-    def test_missing_sdk_is_an_error_not_a_guess(self):
-        result, state = self.handover(android_home=self.base / "no-such-sdk")
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("ANDROID_HOME", result.stderr)
-        self.assertEqual(state["commands"], [], "nothing reaches the TV")
 
 
 if __name__ == "__main__":

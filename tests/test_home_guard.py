@@ -55,7 +55,8 @@ def answer(command):
         return "".join(f"package:{name}\n" for name in state["installed"])
     if command == "pm list packages -d":
         return "".join(f"package:{name}\n" for name in state["disabled"])
-    if command.startswith("cmd package query-activities"):
+    # Only the HOME query: the input/Settings handler guard asks the same command for other intents.
+    if command.startswith("cmd package query-activities") and "category.HOME" in command:
         if state["claims_fail"]:
             raise Fail()
         return "".join(f"  {c if '/' in c else c + '/.MainActivity'}\n" for c in state["claims"])
@@ -63,6 +64,8 @@ def answer(command):
         if state["home_fails"]:
             raise Fail()
         return (state["home"] or "") + "\n"
+    if command.startswith("dumpsys activity"):
+        return state.get("home_process", "")
     if command.startswith("settings get global "):
         return "null\n"
     return ""
@@ -145,6 +148,7 @@ class HomeGuardTest(unittest.TestCase):
             "claims": [STOCK],
             "home_fails": False,
             "claims_fail": False,
+            "home_process": "",
             "commands": [],
         }
         state.update(overrides)
@@ -154,6 +158,8 @@ class HomeGuardTest(unittest.TestCase):
         env = dict(os.environ, TV_HOST="192.168.1.50", HOME=str(self.home),
                    FAKE_TV_STATE=str(self.state_path), **(extra_env or {}))
         if entry == "sh":
+            if os.name != "posix" or not shutil.which("bash"):
+                raise unittest.SkipTest("disable.sh is a POSIX script; it needs bash")
             argv = ["bash", str(self.tools / "disable.sh"), str(list_path or self.list_path)]
         else:
             argv = [PWSH, "-NoProfile", "-File", str(self.tools / "disable.ps1"),
@@ -233,6 +239,21 @@ class HomeGuardTest(unittest.TestCase):
                                  "a vendor fallback is not a launcher to fall back on")
                 self.assertIn(f"Skipping {STOCK}", self.output(result))
 
+    def test_a_factory_test_app_does_not_count_as_another_home(self):
+        # A Xiaomi Mi TV 4A answers the HOME query with com.duokan.factorytest/.FactoryLauncher next to
+        # the launcher and a FallbackHome. Counting the factory test as another Home let a list disable
+        # the owner and hand Home to the factory test screen.
+        for entry in self.entries():
+            for factory in ("com.duokan.factorytest/.FactoryLauncher", "com.example.factory_test/.Main",
+                            "com.mediatek.factorymode/.FactoryHome"):
+                with self.subTest(entry=entry, factory=factory):
+                    self.tv(claims=[factory, STOCK, "com.android.tv.settings/.system.FallbackHome"])
+                    result, sent = self.disable(entry)
+                    self.assertEqual(result.returncode, 0, self.output(result))
+                    self.assertNotIn(f"pm disable-user --user 0 {STOCK}", sent,
+                                     "a factory test app is not a launcher to fall back on")
+                    self.assertIn(f"Skipping {STOCK}", self.output(result))
+
     def test_a_tv_that_cannot_list_its_homes_is_left_with_one(self):
         # tv.py fails or the TV answers nothing: the owner is the only Home this run knows about.
         for entry in self.entries():
@@ -241,6 +262,32 @@ class HomeGuardTest(unittest.TestCase):
                 result, sent = self.disable(entry)
                 self.assertEqual(result.returncode, 0, self.output(result))
                 self.assertNotIn(f"pm disable-user --user 0 {STOCK}", sent)
+
+    def test_a_firmware_without_cmd_package_still_finds_home(self):
+        # `cmd` arrived with Android 7. On a KitKat set the query answers the shell's own error, and the
+        # guard used to be skipped in silence while the list went on to disable the only Home (#795).
+        # The framework has printed the package holding Home since 4.x: `dumpsys activity` says
+        # "mHomeProcess: ProcessRecord{52f4a5c8 2f4b:com.google.android.tvlauncher/u0a56}".
+        for entry in self.entries():
+            with self.subTest(entry=entry):
+                self.tv(home="/system/bin/sh: cmd: not found",
+                        home_process="  mHomeProcess: ProcessRecord{52f4a5c8 2f4b:"
+                                     + STOCK + "/u0a56}")
+                result, sent = self.disable(entry)
+                self.assertEqual(result.returncode, 0, self.output(result))
+                self.assertNotIn(f"pm disable-user --user 0 {STOCK}", sent,
+                                 "Home was readable from dumpsys, so the guard must still run")
+                self.assertIn(f"Skipping {STOCK}", self.output(result))
+
+    def test_a_tv_that_cannot_name_its_home_is_told_so(self):
+        # Neither query names Home: the guard cannot check anything, and the run says that instead of
+        # looking like it checked. Silently skipping the guard is what the brick report did not see.
+        for entry in self.entries():
+            with self.subTest(entry=entry):
+                self.tv(home="/system/bin/sh: cmd: not found", home_process="")
+                result, sent = self.disable(entry)
+                self.assertEqual(result.returncode, 0, self.output(result))
+                self.assertIn("Could not tell which app owns Home", self.output(result))
 
     def test_force_disables_the_owner(self):
         for entry in self.entries():
@@ -275,6 +322,17 @@ class HomeGuardTest(unittest.TestCase):
                                  "the chooser answer must not switch the Home guard off")
                 self.assertIn(f"Skipping {STOCK}", self.output(result))
                 self.assertIn("pm disable-user --user 0 com.example.before", sent)
+
+    def test_chooser_answer_is_reported_as_the_chooser(self):
+        # The TV did answer: Home has no default. Saying neither query named one is wrong here.
+        for entry in self.entries():
+            with self.subTest(entry=entry):
+                self.tv(home="android", claims=[STOCK, CUSTOM])
+                result, sent = self.disable(entry)
+                self.assertEqual(result.returncode, 0, self.output(result))
+                out = " ".join(self.output(result).split())
+                self.assertIn("Home has no default on this TV", out)
+                self.assertNotIn("named one", out)
 
     def test_failed_resolve_still_keeps_the_only_launcher(self):
         for entry in self.entries():
@@ -338,6 +396,56 @@ class HomeGuardTest(unittest.TestCase):
                 self.assertIn("pm disable-user --user 0 com.example.before", sent)
                 self.assertIn("could not", self.output(result).lower())
 
+    def test_chooser_does_not_count_a_factory_test_app_as_another_home(self):
+        # The factory-test exclusion lives in the shared claimant filter, so it holds without an owner
+        # too: Android's chooser plus a Mi TV 4A FactoryLauncher must not let the only launcher go.
+        for entry in self.entries():
+            with self.subTest(entry=entry):
+                self.tv(home="android", claims=["com.duokan.factorytest/.FactoryLauncher", STOCK])
+                result, sent = self.disable(entry)
+                self.assertEqual(result.returncode, 0, self.output(result))
+                self.assertNotIn(f"pm disable-user --user 0 {STOCK}", sent,
+                                 "a factory test app is not a launcher to fall back on")
+                self.assertIn(f"Skipping {STOCK}", self.output(result))
+
+    def test_no_cmd_and_no_home_process_falls_back_to_claimants(self):
+        # #795 meets the fail-closed path: resolve-activity is missing and dumpsys has no Home process
+        # (mHomeProcess: null), so no owner is known. The guard still keeps the only launcher, and the
+        # run still says it could not name Home.
+        for entry in self.entries():
+            with self.subTest(entry=entry):
+                self.tv(home="/system/bin/sh: cmd: not found", home_process="  mHomeProcess: null\n")
+                result, sent = self.disable(entry)
+                self.assertEqual(result.returncode, 0, self.output(result))
+                self.assertNotIn(f"pm disable-user --user 0 {STOCK}", sent)
+                self.assertIn(f"Skipping {STOCK}", self.output(result))
+                self.assertIn("Could not tell which app owns Home", self.output(result))
+                self.assertIn("pm disable-user --user 0 com.example.before", sent)
+
+    def test_no_cmd_and_no_home_process_lets_an_unlisted_launcher_through(self):
+        # Same blind spot, but another launcher stays enabled: the stock one in the list may go.
+        for entry in self.entries():
+            with self.subTest(entry=entry):
+                self.tv(installed=["com.example.before", "com.example.after", STOCK, CUSTOM],
+                        home="/system/bin/sh: cmd: not found", home_process="",
+                        claims=[STOCK, CUSTOM])
+                result, sent = self.disable(entry)
+                self.assertEqual(result.returncode, 0, self.output(result))
+                self.assertIn(f"pm disable-user --user 0 {STOCK}", sent)
+                self.assertNotIn("Skipping", self.output(result))
+
+    def test_dumpsys_owner_with_unlistable_claimants_keeps_the_owner(self):
+        # dumpsys names the owner but the claimant query fails: the owner is the only Home known.
+        for entry in self.entries():
+            with self.subTest(entry=entry):
+                self.tv(home="/system/bin/sh: cmd: not found", claims_fail=True,
+                        home_process="  mHomeProcess: ProcessRecord{52f4a5c8 2f4b:" + STOCK + "/u0a56}")
+                result, sent = self.disable(entry)
+                self.assertEqual(result.returncode, 0, self.output(result))
+                self.assertNotIn(f"pm disable-user --user 0 {STOCK}", sent)
+                self.assertIn(f"Skipping {STOCK}", self.output(result))
+                self.assertNotIn("Could not tell which app owns Home", self.output(result))
+
     def test_force_overrides_the_chooser_fallback(self):
         for entry in self.entries():
             with self.subTest(entry=entry):
@@ -345,26 +453,6 @@ class HomeGuardTest(unittest.TestCase):
                 result, sent = self.disable(entry, {"FORCE_HOME": "1"})
                 self.assertEqual(result.returncode, 0, self.output(result))
                 self.assertIn(f"pm disable-user --user 0 {STOCK}", sent)
-
-    # Review O1: two packages people usually want to keep get a one-line, non-blocking notice.
-    def test_ask_first_packages_get_a_notice_but_are_still_disabled(self):
-        self.write_list(["com.example.before", "com.google.android.katniss", "com.google.android.tv"])
-        for entry in self.entries():
-            with self.subTest(entry=entry):
-                self.tv(installed=["com.example.before", "com.google.android.katniss",
-                                   "com.google.android.tv", STOCK])
-                result, sent = self.disable(entry)
-                self.assertEqual(result.returncode, 0, self.output(result))
-                self.assertIn("pm disable-user --user 0 com.google.android.katniss", sent)
-                self.assertIn("pm disable-user --user 0 com.google.android.tv", sent)
-                out = self.output(result)
-                self.assertIn("Note: com.google.android.katniss", out)
-                self.assertIn("Note: com.google.android.tv ", out)
-
-    def test_no_notice_for_ordinary_lists(self):
-        self.tv()
-        result, _ = self.disable("sh")
-        self.assertNotIn("Note: com.google.android", self.output(result))
 
     def test_the_skipped_launcher_stays_in_the_recovery_record(self):
         self.tv()

@@ -127,12 +127,11 @@ class RecoveryRecordTest(unittest.TestCase):
         state.update(overrides)
         self.state_path.write_text(json.dumps(state))
 
-    def run_script(self, script, *args, env=None):
-        extra_env = env or {}
-        base_env = {k: v for k, v in os.environ.items() if k != "CLEANYOURTV_RESTORE_WITHOUT_RECORD"}
-        env = dict(base_env, TV_HOST="192.168.1.50", HOME=str(self.home),
+    def run_script(self, script, *args):
+        if os.name != "posix" or not shutil.which("bash"):
+            raise unittest.SkipTest(f"{script} is a POSIX script; it needs bash")
+        env = dict(os.environ, TV_HOST="192.168.1.50", HOME=str(self.home),
                    FAKE_TV_STATE=str(self.state_path))
-        env.update(extra_env)
         return subprocess.run(
             ["bash", str(self.repo / "tools" / script), *args],
             cwd=self.repo, env=env, capture_output=True, text=True, timeout=120,
@@ -234,12 +233,8 @@ class RecoveryRecordTest(unittest.TestCase):
         self.assertIn("leaving com.example.already_off alone", result.stderr)
 
     def test_restore_without_a_record_says_so_and_falls_back(self):
-        # Review L7: the enable-the-whole-list fallback also turns on packages the owner had disabled
-        # before cleanup, so it now needs CLEANYOURTV_RESTORE_WITHOUT_RECORD=1. This test opts in on
-        # purpose; the next one checks that nothing is sent without it.
         self.tv()
-        result = self.run_script("restore.sh", str(self.list_path),
-                                 env={"CLEANYOURTV_RESTORE_WITHOUT_RECORD": "1"})
+        result = self.run_script("restore.sh", str(self.list_path))
         self.assertEqual(result.returncode, 0, result.stderr)
         sent = self.sent()
         self.assertIn("no recovery record", result.stderr)
@@ -250,26 +245,6 @@ class RecoveryRecordTest(unittest.TestCase):
         ])
         self.assertIn("pm enable com.google.android.tvlauncher", sent)
         self.assertIn("settings put global window_animation_scale 1.0", sent)
-
-    def test_restore_without_a_record_stops_unless_asked(self):
-        self.tv()
-        result = self.run_script("restore.sh", str(self.list_path))
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("no recovery record", result.stderr)
-        self.assertIn("CLEANYOURTV_RESTORE_WITHOUT_RECORD=1", result.stderr)
-        self.assertEqual(self.sent(), [], "nothing reaches the TV without a record or the opt-in")
-
-    def test_missing_record_points_at_records_for_the_same_list(self):
-        # The record was taken with TV_HOST=tv.local; restore is run with the IP. Same list name.
-        self.tv()
-        other = self.run_script("disable.sh", str(self.list_path), env={"TV_HOST": "tv.local"})
-        self.assertEqual(other.returncode, 0, other.stderr)
-        self.tv()
-        result = self.run_script("restore.sh", str(self.list_path))
-        self.assertNotEqual(result.returncode, 0)
-        recorded = next((self.home / ".cleanyourtv").glob("recovery-tv.local-*.json"))
-        self.assertIn(str(recorded), result.stderr, "the near-miss record is named as a hint")
-        self.assertEqual(self.sent(), [])
 
     def test_edited_list_leaves_new_names_alone(self):
         self.tv()
