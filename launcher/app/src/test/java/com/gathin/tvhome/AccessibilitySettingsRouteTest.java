@@ -79,8 +79,8 @@ public class AccessibilitySettingsRouteTest {
         assertTrue(handler.contains("openAccessibilitySettings()"));
         assertTrue(src.contains("AccessibilitySettingsRoute.candidates()"));
         assertTrue(src.contains("R.string.juos_accessibility_adb_help"));
-        // System settings row keeps the old behaviour.
-        assertTrue(src.contains("R.id.tvSettingsChoice).setOnClickListener(v ->\n                open(new Intent(Settings.ACTION_SETTINGS)));"));
+        // System settings row keeps upstream's behaviour (SystemSettings picks the vendor fallback).
+        assertTrue(src.contains("R.id.tvSettingsChoice).setOnClickListener(v ->\n                open(SystemSettings.intent(this, Settings.ACTION_SETTINGS)));"));
     }
 
     @Test public void helpStringsExistInEnglishAndChineseWithCommandPlaceholder() throws Exception {

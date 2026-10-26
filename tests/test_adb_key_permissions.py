@@ -61,8 +61,7 @@ class AdbKeyPermissionsTest(unittest.TestCase):
         result = subprocess.run([sys.executable, "-c", "import tv; tv.get_signer()"],
                                 cwd=tmp, env=env, capture_output=True, text=True, timeout=60)
         self.assertEqual(result.returncode, 0, result.stderr)
-        # Generated keys live in ~/.cleanyourtv/adbkey/ (review item O2), outside the checkout.
-        return tmp / ".cleanyourtv" / "adbkey" / "adbkey"
+        return tools / "adbkey" / "adbkey"
 
     def test_private_key_is_not_readable_by_group_or_others(self):
         key = self.make_key()

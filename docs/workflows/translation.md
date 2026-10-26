@@ -18,6 +18,11 @@
      language that names them itself (`values-zh-rCN`, `values-vi`). Keep `lunar_stems` at ten items and
      `lunar_branches` at twelve: `Lunar.java` indexes both by position, so a short list crashes the
      launcher on a TV running that language and nothing anywhere else.
+   - Vidda build only: `app_management_strings.xml`, `appearance_strings.xml`, `bing_gallery_strings.xml`,
+     `juos_strings.xml`, `tile_options_strings.xml` and `wallpaper_management_strings.xml` hold the strings of
+     the Vidda features (App management, glass dock and weather, Bing wallpapers, the JUOS Home redirect, the
+     tile options panel, wallpaper management). Translate them like `strings.xml`, with the same names as the
+     default file.
 3. Add the locale to `launcher/app/src/main/res/xml/locales_config.xml`, in the tag form: a language
    folder that is not registered there cannot be chosen for the launcher alone on Android 13+.
 4. Add the language to the Languages list in `README.md`.
