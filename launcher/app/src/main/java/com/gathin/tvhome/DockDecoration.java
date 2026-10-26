@@ -22,6 +22,8 @@ public class DockDecoration extends RecyclerView.ItemDecoration {
     private final int[] origin = new int[2];
     /** Glass dock (launcher settings): light glass instead of the band; null keeps the band. */
     private final GlassPainter glass;
+    /** Launcher settings' dock opacity, applied to the glass too (0-255); 255 draws it directly. */
+    private final int glassAlpha;
 
     /** Extra band below the tiles for their names (always_show_names), in px. */
     private final float namesRoom;
@@ -60,6 +62,7 @@ public class DockDecoration extends RecyclerView.ItemDecoration {
     DockDecoration(int dockSize, float density, boolean translucent, boolean names, int opacity, boolean lightGlass,
                    boolean evenPadding, boolean bandVisible, boolean singleRow, boolean bandAll, GlassPainter glass) {
         this.glass = glass;
+        this.glassAlpha = glassAlpha(opacity);
         this.dockSize = dockSize;
         this.singleRow = singleRow;
         this.bandAll = singleRow && bandAll;
@@ -72,6 +75,12 @@ public class DockDecoration extends RecyclerView.ItemDecoration {
         edge.setStyle(Paint.Style.STROKE);
         edge.setStrokeWidth(density);
         edge.setColor(lightGlass ? 0x38FFFFFF : translucent ? 0x26FFFFFF : 0x1FFFFFFF);
+    }
+
+    /** dock_opacity (30-100 %) as a layer alpha for the glass dock; anything out of range draws it opaque. */
+    static int glassAlpha(int opacityPercent) {
+        if (opacityPercent <= 0 || opacityPercent >= 100) return 255;
+        return Math.round(opacityPercent * 2.55f);
     }
 
     /** Concentric corners: the band's radius is the tiles' radius plus the band's padding around them. */
@@ -162,7 +171,17 @@ public class DockDecoration extends RecyclerView.ItemDecoration {
         }
         if (glass != null) {
             parent.getLocationInWindow(origin);
+            if (glassAlpha >= 255) {
+                glass.draw(c, rect, radius, origin[0], origin[1], parent.getWidth());
+                return;
+            }
+            // The dock opacity setting fades the whole glass (blur, tint, edges and shadow) as one layer, so
+            // the wallpaper shows through the way it does through the plain band.
+            float grow = 30 * density;
+            int saved = c.saveLayerAlpha(Math.max(0, rect.left - grow), rect.top - grow,
+                    Math.min(parent.getWidth(), rect.right + grow), rect.bottom + grow, glassAlpha);
             glass.draw(c, rect, radius, origin[0], origin[1], parent.getWidth());
+            c.restoreToCount(saved);
             return;
         }
         c.drawRoundRect(rect, radius, radius, band);
