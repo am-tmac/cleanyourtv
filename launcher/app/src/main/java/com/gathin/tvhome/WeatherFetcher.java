@@ -48,7 +48,7 @@ final class WeatherFetcher {
         Context app = ctx.getApplicationContext();
         SharedPreferences p = app.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         long now = System.currentTimeMillis();
-        if (!RefreshPolicy.weatherDue(p.getLong("attempt", 0), now)) return false;
+        if (!RefreshPolicy.weatherDue(p.getLong("attempt", 0), p.getLong("fetched", 0), now)) return false;
         p.edit().putLong("attempt", now).apply();
         executor.execute(() -> {
             if (fetch(p, chinese)) done.run();

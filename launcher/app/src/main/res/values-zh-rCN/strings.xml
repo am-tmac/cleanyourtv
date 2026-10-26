@@ -45,6 +45,7 @@
     <string name="ethernet">有线网络</string>
     <string name="offline">未连接网络</string>
     <string name="not_available">此电视不支持该功能</string>
+    <string name="source_panel_use_remote">请用遥控器上的信号源键切换</string>
     <string name="cant_open">无法打开 %1$s</string>
     <string name="date_format">M月d日 EEEE</string>
     <string name="date_format_home">M月d日 EEEE</string>

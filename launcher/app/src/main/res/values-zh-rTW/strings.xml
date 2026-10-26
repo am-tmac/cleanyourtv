@@ -17,6 +17,7 @@
     <string name="ethernet">有線網路</string>
     <string name="offline">未連上網路</string>
     <string name="not_available">這台電視不支援此功能</string>
+    <string name="source_panel_use_remote">請用遙控器上的訊號源鍵切換</string>
     <string name="cant_open">無法開啟 %1$s</string>
     <string name="date_format">M月d日 EEEE</string>
     <string name="stats_cpu">CPU %1$d%%</string>

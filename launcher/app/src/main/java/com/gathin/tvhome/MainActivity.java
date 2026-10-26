@@ -3052,7 +3052,56 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             }
             startService(i);
         } catch (Exception e) {
-            Toast.makeText(this, R.string.not_available, Toast.LENGTH_SHORT).show();
+            // Vidda/JUOS: Hisense's panel service lives in a process that exits when idle, and the system then
+            // refuses a plain startService into it. Binding brings the process up; start the panel once it is.
+            noteSourcePanelFailure(e);
+            if (!startSourcePanelByBinding(i)) {
+                Toast.makeText(this, R.string.source_panel_use_remote, Toast.LENGTH_LONG).show();
+            }
+        }
+    }
+
+    /** Binds to the source panel service so its process starts, then asks for the panel and unbinds. */
+    private boolean startSourcePanelByBinding(Intent panel) {
+        if (panel.getComponent() == null) return false;
+        final Intent request = new Intent(panel);
+        android.content.ServiceConnection conn = new android.content.ServiceConnection() {
+            private boolean done;
+
+            private void startPanel() {
+                if (done) return;
+                done = true;
+                try {
+                    startService(request);
+                } catch (Exception e) {
+                    noteSourcePanelFailure(e);
+                    Toast.makeText(MainActivity.this, R.string.source_panel_use_remote, Toast.LENGTH_LONG).show();
+                }
+                handler.postDelayed(() -> {
+                    try { unbindService(this); } catch (IllegalArgumentException ignored) { }
+                }, 1500);
+            }
+
+            @Override public void onServiceConnected(ComponentName name, android.os.IBinder service) { startPanel(); }
+            @Override public void onNullBinding(ComponentName name) { startPanel(); }
+            @Override public void onServiceDisconnected(ComponentName name) { }
+        };
+        try {
+            return bindService(new Intent(panel).setAction(panel.getAction()), conn, BIND_AUTO_CREATE);
+        } catch (Exception e) {
+            noteSourcePanelFailure(e);
+            return false;
+        }
+    }
+
+    /** The last source-panel failure, for diagnosis over adb (logcat is off on JUOS):
+     *  /sdcard/Android/data/com.gathin.tvhome/files/source-panel-error.txt */
+    private void noteSourcePanelFailure(Exception e) {
+        File dir = getExternalFilesDir(null);
+        if (dir == null) return;
+        try (java.io.FileWriter w = new java.io.FileWriter(new File(dir, "source-panel-error.txt"), true)) {
+            w.write(System.currentTimeMillis() + " " + e + "\n");
+        } catch (IOException | RuntimeException ignored) {
         }
     }
 

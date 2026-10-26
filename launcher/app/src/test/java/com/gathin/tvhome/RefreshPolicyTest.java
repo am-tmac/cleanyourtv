@@ -16,6 +16,17 @@ public class RefreshPolicyTest {
         assertTrue(RefreshPolicy.weatherDue(NOW + 5 * MIN, NOW));   // clock went back: don't stall for days
     }
 
+    @Test public void failedWeatherRetriesAfterTwoMinutes() {
+        // last attempt got no reading (fetched before it): retry after 2 minutes, not 30
+        assertFalse(RefreshPolicy.weatherDue(NOW - MIN, NOW - HOUR, NOW));
+        assertTrue(RefreshPolicy.weatherDue(NOW - 2 * MIN, NOW - HOUR, NOW));
+        assertTrue(RefreshPolicy.weatherDue(NOW - 2 * MIN, 0, NOW));
+        // last attempt succeeded: the usual 30 minutes
+        assertFalse(RefreshPolicy.weatherDue(NOW - 10 * MIN, NOW - 10 * MIN + 1500, NOW));
+        assertTrue(RefreshPolicy.weatherDue(NOW - 30 * MIN, NOW - 30 * MIN + 1500, NOW));
+        assertTrue(RefreshPolicy.weatherDue(0, 0, NOW));
+    }
+
     @Test public void locationCachedForSixHours() {
         assertTrue(RefreshPolicy.locationDue(0, NOW));
         assertFalse(RefreshPolicy.locationDue(NOW - 5 * HOUR, NOW));
